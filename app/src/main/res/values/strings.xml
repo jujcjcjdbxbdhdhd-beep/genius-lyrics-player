@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">Genius Live Lyrics</string>
+    <string name="notification_listener_service">Genius Music Tracker Service</string>
+    <string name="waiting_for_music">Ожидание музыки из плеера…</string>
+    <string name="waiting_hint">Включите песню в Spotify, Яндекс Музыке, VK, YouTube Music или любом другом плеере</string>
+    <string name="permission_required_title">Требуется доступ к уведомлениям</string>
+    <string name="permission_required_desc">Чтобы приложение автоматически понимало, какая песня играет сейчас на телефоне, разрешите доступ к уведомлениям.</string>
+    <string name="grant_permission">Предоставить доступ</string>
+    <string name="auto_scroll">Автопрокрутка</string>
+    <string name="speed">Скорость</string>
+    <string name="font_size">Шрифт</string>
+    <string name="floating_window">Плавающее окно</string>
+    <string name="search_hint">Поиск песни или исполнителя вручную…</string>
+    <string name="searching_genius">Поиск текста на Genius…</string>
+    <string name="loading_lyrics">Загрузка текста песни…</string>
+    <string name="no_lyrics_found">Текст для этого трека на Genius не найден</string>
+    <string name="now_playing">СЕЙЧАС ИГРАЕТ</string>
+    <string name="retry">Повторить</string>
+    <string name="to_top">В начало</string>
+</resources>
