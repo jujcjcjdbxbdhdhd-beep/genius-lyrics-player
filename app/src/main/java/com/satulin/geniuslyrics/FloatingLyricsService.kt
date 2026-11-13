@@ -145,7 +145,7 @@ class FloatingLyricsService : Service() {
         scope.launch {
             val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title)
             result.onSuccess { lyricsResult ->
-                tvLyrics?.text = lyricsResult.lyrics
+                tvLyrics?.text = lyricsResult.plainLyrics
             }.onFailure { err ->
                 tvLyrics?.text = "Текст не найден: ${err.localizedMessage}"
             }
