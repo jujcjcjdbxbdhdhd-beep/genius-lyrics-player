@@ -1,7 +1,6 @@
 package com.satulin.geniuslyrics
 
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -10,8 +9,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.text.SpannableStringBuilder
-import android.text.style.StyleSpan
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -19,6 +16,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.satulin.geniuslyrics.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -28,14 +26,17 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var lyricsAdapter: LyricsAdapter
+    private lateinit var layoutManager: LinearLayoutManager
 
     private var isAutoScrolling = false
     private var scrollSpeedFactor = 1.0f
     private var scrollJob: Job? = null
-    private var currentFontSizeSp = 17f
+    private var currentFontSizeSp = 19f
 
     private var activeTitle: String = ""
     private var activeArtist: String = ""
+    private var lyricsLines: List<String> = emptyList()
 
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -53,8 +54,21 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        setupRecyclerView()
         setupUI()
         checkPermissions()
+    }
+
+    private fun setupRecyclerView() {
+        layoutManager = LinearLayoutManager(this)
+        binding.rvLyrics.layoutManager = layoutManager
+
+        lyricsAdapter = LyricsAdapter { clickedPosition ->
+            // Tap on any line immediately jumps to it and makes it active
+            selectLine(clickedPosition, smoothScroll = true)
+        }
+        lyricsAdapter.fontSizeSp = currentFontSizeSp
+        binding.rvLyrics.adapter = lyricsAdapter
     }
 
     override fun onResume() {
@@ -124,21 +138,21 @@ class MainActivity : AppCompatActivity() {
 
         // Font Size Controls
         binding.btnFontDown.setOnClickListener {
-            if (currentFontSizeSp > 12f) {
+            if (currentFontSizeSp > 13f) {
                 currentFontSizeSp -= 2f
-                binding.tvLyrics.textSize = currentFontSizeSp
+                lyricsAdapter.fontSizeSp = currentFontSizeSp
             }
         }
         binding.btnFontUp.setOnClickListener {
-            if (currentFontSizeSp < 30f) {
+            if (currentFontSizeSp < 32f) {
                 currentFontSizeSp += 2f
-                binding.tvLyrics.textSize = currentFontSizeSp
+                lyricsAdapter.fontSizeSp = currentFontSizeSp
             }
         }
 
         // Scroll to Top
         binding.btnScrollToTop.setOnClickListener {
-            binding.scrollLyrics.smoothScrollTo(0, 0)
+            selectLine(0, smoothScroll = true)
         }
 
         // Manual Search
@@ -175,11 +189,43 @@ class MainActivity : AppCompatActivity() {
         scrollJob?.cancel()
         scrollJob = lifecycleScope.launch {
             while (isActive && isAutoScrolling) {
-                val delayMs = (100 / scrollSpeedFactor).toLong().coerceIn(30, 200)
-                delay(delayMs)
-                // Scroll down smoothly by 3 pixels
-                binding.scrollLyrics.smoothScrollBy(0, 3)
+                if (lyricsLines.isNotEmpty()) {
+                    val currentIndex = lyricsAdapter.activeLineIndex
+                    val nextIndex = if (currentIndex + 1 < lyricsLines.size) currentIndex + 1 else 0
+
+                    // Calculate reading delay based on length of the current line and speed factor
+                    val currentLine = lyricsLines.getOrNull(currentIndex) ?: ""
+                    val wordsCount = currentLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
+                    val baseDelay = when {
+                        currentLine.startsWith("[") -> 1800L
+                        wordsCount <= 3 -> 2400L
+                        wordsCount <= 6 -> 3200L
+                        wordsCount <= 10 -> 4000L
+                        else -> 4800L
+                    }
+
+                    val adjustedDelay = (baseDelay / scrollSpeedFactor).toLong().coerceIn(800L, 8000L)
+                    delay(adjustedDelay)
+
+                    if (!isActive || !isAutoScrolling) break
+                    selectLine(nextIndex, smoothScroll = true)
+                } else {
+                    delay(500)
+                }
             }
+        }
+    }
+
+    private fun selectLine(position: Int, smoothScroll: Boolean) {
+        if (position < 0 || position >= lyricsLines.size) return
+        lyricsAdapter.activeLineIndex = position
+
+        // Center the active line on screen
+        if (smoothScroll) {
+            val offset = (binding.rvLyrics.height * 0.35).toInt()
+            layoutManager.scrollToPositionWithOffset(position, offset)
+        } else {
+            layoutManager.scrollToPositionWithOffset(position, 100)
         }
     }
 
@@ -239,48 +285,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadLyrics(artist: String, title: String) {
         binding.progressBar.visibility = View.VISIBLE
-        binding.tvLyrics.text = "Загрузка текста с Genius..."
-        binding.scrollLyrics.scrollTo(0, 0)
+        binding.tvLyricsPlaceholder.visibility = View.VISIBLE
+        binding.tvLyricsPlaceholder.text = "Загрузка оригинального текста с Genius..."
+        binding.rvLyrics.visibility = View.GONE
 
         lifecycleScope.launch {
             val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title)
             binding.progressBar.visibility = View.GONE
 
             result.onSuccess { lyricsResult ->
-                val formattedText = formatLyricsDisplay(lyricsResult.lyrics)
-                binding.tvLyrics.text = formattedText
+                binding.tvLyricsPlaceholder.visibility = View.GONE
+                binding.rvLyrics.visibility = View.VISIBLE
+
+                // Parse into clean non-empty lines
+                lyricsLines = lyricsResult.lyrics.lines()
+                    .map { it.trimEnd() }
+                    .filter { it.isNotBlank() }
+
+                lyricsAdapter.submitLines(lyricsLines)
+                selectLine(0, smoothScroll = false)
 
                 // If user had auto-scroll enabled, resume
                 if (isAutoScrolling) {
                     startAutoScroll()
                 }
             }.onFailure { err ->
-                binding.tvLyrics.text = "Не удалось загрузить текст песни:\n\n${err.localizedMessage}\n\nПопробуйте воспользоваться строкой поиска выше."
+                binding.rvLyrics.visibility = View.GONE
+                binding.tvLyricsPlaceholder.visibility = View.VISIBLE
+                binding.tvLyricsPlaceholder.text = "Не удалось загрузить текст песни:\n\n${err.localizedMessage}\n\nПопробуйте воспользоваться строкой поиска выше."
             }
         }
-    }
-
-    private fun formatLyricsDisplay(rawLyrics: String): CharSequence {
-        val builder = SpannableStringBuilder()
-        val lines = rawLyrics.lines()
-
-        for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                // Section header like [Chorus], [Verse 1]
-                val start = builder.length
-                builder.append("\n").append(trimmed).append("\n")
-                builder.setSpan(
-                    StyleSpan(android.graphics.Typeface.BOLD),
-                    start,
-                    builder.length,
-                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-            } else {
-                builder.append(line).append("\n")
-            }
-        }
-        return builder
     }
 
     private fun toggleFloatingLyrics() {

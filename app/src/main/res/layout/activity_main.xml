@@ -261,41 +261,44 @@
             app:iconTint="@color/text_secondary" />
     </LinearLayout>
 
-    <!-- Lyrics Scroll Area -->
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/scrollLyrics"
+    <!-- Lyrics Area (RecyclerView with smooth animated line highlight) -->
+    <FrameLayout
+        android:id="@+id/layoutLyricsContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="10dp"
         android:background="@drawable/card_background"
-        android:fillViewport="true"
-        android:padding="16dp"
+        android:padding="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintTop_toBottomOf="@id/layoutControls">
 
-        <FrameLayout
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvLyrics"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingTop="20dp"
+            android:paddingBottom="120dp"
+            android:scrollbars="vertical" />
 
-            <!-- Progress Indicator -->
-            <ProgressBar
-                android:id="@+id/progressBar"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center"
-                android:indeterminateTint="@color/genius_yellow"
-                android:visibility="gone" />
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminateTint="@color/genius_yellow"
+            android:visibility="gone" />
 
-            <!-- Lyrics Text -->
-            <TextView
-                android:id="@+id/tvLyrics"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:lineSpacingExtra="6dp"
-                android:text="Включите любую песню в музыкальном плеере, и ее слова с Genius.com автоматически появятся здесь."
-                android:textColor="@color/text_secondary"
-                android:textSize="17sp" />
-        </FrameLayout>
-    </androidx.core.widget.NestedScrollView>
+        <TextView
+            android:id="@+id/tvLyricsPlaceholder"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="Включите любую песню в плеере, и ее слова с Genius.com появятся здесь."
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

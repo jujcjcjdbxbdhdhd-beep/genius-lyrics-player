@@ -49,19 +49,7 @@ object GeniusLyricsFetcher {
                 return@withContext Result.success(diskCached)
             }
 
-            // 3. Try LRCLIB first (often has clean lyrics and exact match)
-            try {
-                val lrclibResult = fetchFromLrclib(artist, title)
-                if (lrclibResult != null && lrclibResult.lyrics.isNotBlank()) {
-                    saveDiskCache(context, cacheKey, lrclibResult)
-                    memoryCache[cacheKey] = lrclibResult
-                    return@withContext Result.success(lrclibResult)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "LRCLIB query failed, falling back to Genius: ${e.message}")
-            }
-
-            // 4. Search and scrape Genius.com
+            // 1. Search and scrape Genius.com first (prioritizing authentic Genius lyrics)
             try {
                 val geniusResult = searchAndScrapeGenius(artist, title)
                 if (geniusResult != null && geniusResult.lyrics.isNotBlank()) {
@@ -70,8 +58,19 @@ object GeniusLyricsFetcher {
                     return@withContext Result.success(geniusResult)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Genius scrape error: ${e.message}", e)
-                return@withContext Result.failure(e)
+                Log.w(TAG, "Genius scrape error: ${e.message}")
+            }
+
+            // 2. Fallback to LRCLIB if Genius is unreachable or doesn't have the song
+            try {
+                val lrclibResult = fetchFromLrclib(artist, title)
+                if (lrclibResult != null && lrclibResult.lyrics.isNotBlank()) {
+                    saveDiskCache(context, cacheKey, lrclibResult)
+                    memoryCache[cacheKey] = lrclibResult
+                    return@withContext Result.success(lrclibResult)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "LRCLIB query failed: ${e.message}")
             }
 
             return@withContext Result.failure(Exception("Текст песни не найден на Genius"))
