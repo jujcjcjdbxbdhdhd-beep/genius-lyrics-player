@@ -82,10 +82,10 @@ class FloatingLyricsService : Service() {
         btnScroll?.setOnClickListener {
             isAutoScrolling = !isAutoScrolling
             if (isAutoScrolling) {
-                btnScroll.setImageResource(android.drawable.ic_media_pause)
+                btnScroll.setImageResource(android.R.drawable.ic_media_pause)
                 startAutoScroll(scrollView)
             } else {
-                btnScroll.setImageResource(android.drawable.ic_media_play)
+                btnScroll.setImageResource(android.R.drawable.ic_media_play)
                 stopAutoScroll()
             }
         }
