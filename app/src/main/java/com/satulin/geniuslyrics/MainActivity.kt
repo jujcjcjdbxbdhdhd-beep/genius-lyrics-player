@@ -61,7 +61,11 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         checkPermissions()
         val filter = IntentFilter(MediaNotificationListener.ACTION_TRACK_CHANGED)
-        registerReceiver(trackReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(trackReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(trackReceiver, filter)
+        }
 
         // If track is already playing when opening app
         val currentTitle = MediaNotificationListener.currentTitle

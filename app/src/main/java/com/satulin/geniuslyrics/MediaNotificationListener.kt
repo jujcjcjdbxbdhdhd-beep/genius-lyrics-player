@@ -41,7 +41,12 @@ class MediaNotificationListener : NotificationListenerService() {
 
         // Check if it is a media notification
         val isMediaStyle = notification.isMediaNotification()
-        val mediaSessionToken = extras.getParcelable<MediaSession.Token>(Notification.EXTRA_MEDIA_SESSION)
+        val mediaSessionToken = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            extras.getParcelable(Notification.EXTRA_MEDIA_SESSION, MediaSession.Token::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            extras.getParcelable<MediaSession.Token>(Notification.EXTRA_MEDIA_SESSION)
+        }
 
         if (!isMediaStyle && mediaSessionToken == null && !isKnownMusicApp(sbn.packageName)) {
             return

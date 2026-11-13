@@ -119,7 +119,11 @@ class FloatingLyricsService : Service() {
 
         // Register for song updates
         val filter = IntentFilter(MediaNotificationListener.ACTION_TRACK_CHANGED)
-        registerReceiver(trackReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(trackReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(trackReceiver, filter)
+        }
 
         // Load current song if already playing
         val currentTitle = MediaNotificationListener.currentTitle
