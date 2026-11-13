@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -29,22 +30,42 @@ class MainActivity : AppCompatActivity() {
     private lateinit var lyricsAdapter: LyricsAdapter
     private lateinit var layoutManager: LinearLayoutManager
 
-    private var isAutoScrolling = false
+    private var isAutoScrolling = true
     private var scrollSpeedFactor = 1.0f
     private var scrollJob: Job? = null
     private var currentFontSizeSp = 19f
 
     private var activeTitle: String = ""
     private var activeArtist: String = ""
-    private var lyricsLines: List<String> = emptyList()
+    private var currentLyricsResult: LyricsResult? = null
+    private var lyricsLines: List<LyricLine> = emptyList()
+
+    // Real-time playback tracking for exact karaoke timing
+    private var isMediaPlaying = false
+    private var lastKnownPositionMs = 0L
+    private var lastUpdateTimeSystem = 0L
 
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == MediaNotificationListener.ACTION_TRACK_CHANGED) {
-                val title = intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE) ?: ""
-                val artist = intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST) ?: ""
-                val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
-                onTrackUpdated(title, artist, isPlaying)
+            when (intent?.action) {
+                MediaNotificationListener.ACTION_TRACK_CHANGED -> {
+                    val title = intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE) ?: ""
+                    val artist = intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST) ?: ""
+                    val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
+                    val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
+                    val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+
+                    updatePlaybackTime(pos, updated, isPlaying)
+                    onTrackUpdated(title, artist, isPlaying)
+                }
+                MediaNotificationListener.ACTION_PLAYBACK_STATE -> {
+                    val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
+                    val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
+                    val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+
+                    updatePlaybackTime(pos, updated, isPlaying)
+                    updatePlayStatusBadge(isPlaying)
+                }
             }
         }
     }
@@ -64,7 +85,6 @@ class MainActivity : AppCompatActivity() {
         binding.rvLyrics.layoutManager = layoutManager
 
         lyricsAdapter = LyricsAdapter { clickedPosition ->
-            // Tap on any line immediately jumps to it and makes it active
             selectLine(clickedPosition, smoothScroll = true)
         }
         lyricsAdapter.fontSizeSp = currentFontSizeSp
@@ -74,17 +94,26 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         checkPermissions()
-        val filter = IntentFilter(MediaNotificationListener.ACTION_TRACK_CHANGED)
+
+        val filter = IntentFilter().apply {
+            addAction(MediaNotificationListener.ACTION_TRACK_CHANGED)
+            addAction(MediaNotificationListener.ACTION_PLAYBACK_STATE)
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(trackReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(trackReceiver, filter)
         }
 
-        // If track is already playing when opening app
         val currentTitle = MediaNotificationListener.currentTitle
         val currentArtist = MediaNotificationListener.currentArtist
         if (!currentTitle.isNullOrBlank()) {
+            updatePlaybackTime(
+                MediaNotificationListener.currentPositionMs,
+                MediaNotificationListener.lastPositionUpdateTime,
+                MediaNotificationListener.isPlaying
+            )
             onTrackUpdated(
                 currentTitle,
                 currentArtist ?: "",
@@ -111,18 +140,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
-        // Notification Permission Button
         binding.btnGrantPermission.setOnClickListener {
             val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
             startActivity(intent)
         }
 
-        // Auto-Scroll Toggle
         binding.btnToggleScroll.setOnClickListener {
             toggleAutoScroll()
         }
 
-        // Speed Controls
         binding.btnSpeedDown.setOnClickListener {
             if (scrollSpeedFactor > 0.5f) {
                 scrollSpeedFactor -= 0.25f
@@ -136,7 +162,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Font Size Controls
         binding.btnFontDown.setOnClickListener {
             if (currentFontSizeSp > 13f) {
                 currentFontSizeSp -= 2f
@@ -150,12 +175,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Scroll to Top
         binding.btnScrollToTop.setOnClickListener {
             selectLine(0, smoothScroll = true)
         }
 
-        // Manual Search
         binding.btnManualSearch.setOnClickListener {
             performManualSearch()
         }
@@ -166,10 +189,23 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
-        // Floating Overlay Window Toggle
         binding.btnToggleFloating.setOnClickListener {
             toggleFloatingLyrics()
         }
+    }
+
+    private fun updatePlaybackTime(positionMs: Long, updatedAt: Long, playing: Boolean) {
+        lastKnownPositionMs = positionMs
+        lastUpdateTimeSystem = if (updatedAt > 0) updatedAt else SystemClock.elapsedRealtime()
+        isMediaPlaying = playing
+    }
+
+    private fun getCurrentTrackPosition(): Long {
+        if (!isMediaPlaying || lastUpdateTimeSystem == 0L) {
+            return lastKnownPositionMs
+        }
+        val elapsed = SystemClock.elapsedRealtime() - lastUpdateTimeSystem
+        return lastKnownPositionMs + elapsed
     }
 
     private fun toggleAutoScroll() {
@@ -177,7 +213,7 @@ class MainActivity : AppCompatActivity() {
         if (isAutoScrolling) {
             binding.btnToggleScroll.text = "⏸ Пауза"
             binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#333333"))
-            startAutoScroll()
+            startAutoScrollLoop()
         } else {
             binding.btnToggleScroll.text = "▶ Автопрокрутка"
             binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#282828"))
@@ -185,30 +221,52 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startAutoScroll() {
+    private fun startAutoScrollLoop() {
         scrollJob?.cancel()
         scrollJob = lifecycleScope.launch {
             while (isActive && isAutoScrolling) {
                 if (lyricsLines.isNotEmpty()) {
-                    val currentIndex = lyricsAdapter.activeLineIndex
-                    val nextIndex = if (currentIndex + 1 < lyricsLines.size) currentIndex + 1 else 0
+                    val isSynced = currentLyricsResult?.isSynced == true
 
-                    // Calculate reading delay based on length of the current line and speed factor
-                    val currentLine = lyricsLines.getOrNull(currentIndex) ?: ""
-                    val wordsCount = currentLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
-                    val baseDelay = when {
-                        currentLine.startsWith("[") -> 1800L
-                        wordsCount <= 3 -> 2400L
-                        wordsCount <= 6 -> 3200L
-                        wordsCount <= 10 -> 4000L
-                        else -> 4800L
+                    if (isSynced && isMediaPlaying) {
+                        // Precise millisecond timing for synced karaoke lyrics!
+                        val currentMs = getCurrentTrackPosition()
+                        var bestIndex = -1
+                        for (i in lyricsLines.indices) {
+                            val lineTime = lyricsLines[i].timeMs
+                            if (lineTime in 0..currentMs) {
+                                bestIndex = i
+                            } else if (lineTime > currentMs) {
+                                break
+                            }
+                        }
+
+                        if (bestIndex != -1 && bestIndex != lyricsAdapter.activeLineIndex) {
+                            selectLine(bestIndex, smoothScroll = true)
+                        }
+
+                        delay(150)
+                    } else {
+                        // Non-synced fallback: reading delay adjusted by words & speed factor
+                        val currentIndex = lyricsAdapter.activeLineIndex
+                        val nextIndex = if (currentIndex + 1 < lyricsLines.size) currentIndex + 1 else 0
+
+                        val currentLine = lyricsLines.getOrNull(currentIndex)?.text ?: ""
+                        val wordsCount = currentLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
+                        val baseDelay = when {
+                            currentLine.startsWith("[") -> 1600L
+                            wordsCount <= 3 -> 2200L
+                            wordsCount <= 6 -> 3000L
+                            wordsCount <= 10 -> 3800L
+                            else -> 4600L
+                        }
+
+                        val adjustedDelay = (baseDelay / scrollSpeedFactor).toLong().coerceIn(600L, 7000L)
+                        delay(adjustedDelay)
+
+                        if (!isActive || !isAutoScrolling) break
+                        selectLine(nextIndex, smoothScroll = true)
                     }
-
-                    val adjustedDelay = (baseDelay / scrollSpeedFactor).toLong().coerceIn(800L, 8000L)
-                    delay(adjustedDelay)
-
-                    if (!isActive || !isAutoScrolling) break
-                    selectLine(nextIndex, smoothScroll = true)
                 } else {
                     delay(500)
                 }
@@ -220,7 +278,6 @@ class MainActivity : AppCompatActivity() {
         if (position < 0 || position >= lyricsLines.size) return
         lyricsAdapter.activeLineIndex = position
 
-        // Center the active line on screen
         if (smoothScroll) {
             val offset = (binding.rvLyrics.height * 0.35).toInt()
             layoutManager.scrollToPositionWithOffset(position, offset)
@@ -238,10 +295,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvSpeed.text = String.format("%.2fx", scrollSpeedFactor)
     }
 
-    private fun onTrackUpdated(title: String, artist: String, isPlaying: Boolean) {
-        if (title.isBlank()) return
-
-        // Update UI status badge
+    private fun updatePlayStatusBadge(isPlaying: Boolean) {
         if (isPlaying) {
             binding.tvStatusBadge.text = "● ИГРАЕТ"
             binding.tvStatusBadge.setTextColor(Color.parseColor("#1DB954"))
@@ -249,8 +303,12 @@ class MainActivity : AppCompatActivity() {
             binding.tvStatusBadge.text = "● ПАУЗА"
             binding.tvStatusBadge.setTextColor(Color.parseColor("#888888"))
         }
+    }
 
-        // Only reload if song actually changed
+    private fun onTrackUpdated(title: String, artist: String, isPlaying: Boolean) {
+        if (title.isBlank()) return
+        updatePlayStatusBadge(isPlaying)
+
         if (title == activeTitle && artist == activeArtist) {
             return
         }
@@ -271,7 +329,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Hide keyboard
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(binding.etSearchQuery.windowToken, 0)
 
@@ -286,7 +343,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadLyrics(artist: String, title: String) {
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-        binding.tvLyricsPlaceholder.text = "Загрузка оригинального текста с Genius..."
+        binding.tvLyricsPlaceholder.text = "Поиск оригинального текста..."
         binding.rvLyrics.visibility = View.GONE
 
         lifecycleScope.launch {
@@ -294,25 +351,25 @@ class MainActivity : AppCompatActivity() {
             binding.progressBar.visibility = View.GONE
 
             result.onSuccess { lyricsResult ->
+                currentLyricsResult = lyricsResult
                 binding.tvLyricsPlaceholder.visibility = View.GONE
                 binding.rvLyrics.visibility = View.VISIBLE
 
-                // Parse into clean non-empty lines
-                lyricsLines = lyricsResult.lyrics.lines()
-                    .map { it.trimEnd() }
-                    .filter { it.isNotBlank() }
-
+                lyricsLines = lyricsResult.lines
                 lyricsAdapter.submitLines(lyricsLines)
                 selectLine(0, smoothScroll = false)
 
-                // If user had auto-scroll enabled, resume
+                val syncBadge = if (lyricsResult.isSynced) " [Караоке-синхрон]" else ""
+                binding.tvSongArtist.text = (if (artist.isNotBlank()) artist else "Неизвестный исполнитель") +
+                        " • ${lyricsResult.sourceName}$syncBadge"
+
                 if (isAutoScrolling) {
-                    startAutoScroll()
+                    startAutoScrollLoop()
                 }
             }.onFailure { err ->
                 binding.rvLyrics.visibility = View.GONE
                 binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-                binding.tvLyricsPlaceholder.text = "Не удалось загрузить текст песни:\n\n${err.localizedMessage}\n\nПопробуйте воспользоваться строкой поиска выше."
+                binding.tvLyricsPlaceholder.text = "Текст не найден:\n\n${err.localizedMessage}\n\nПопробуйте ввести точное название трека вручную."
             }
         }
     }
