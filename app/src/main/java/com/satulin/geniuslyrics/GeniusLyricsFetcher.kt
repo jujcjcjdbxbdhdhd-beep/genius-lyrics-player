@@ -98,8 +98,10 @@ object GeniusLyricsFetcher {
 
     fun isArtistMatch(expectedArtist: String, candidateArtist: String): Boolean {
         if (expectedArtist.isBlank()) return true
-        val exp = normalizeForMatch(expectedArtist)
-        val cand = normalizeForMatch(candidateArtist)
+        val canonExp = MediaNotificationListener.canonicalizeArtist(expectedArtist)
+        val canonCand = MediaNotificationListener.canonicalizeArtist(candidateArtist)
+        val exp = normalizeForMatch(canonExp)
+        val cand = normalizeForMatch(canonCand)
         if (exp.isBlank() || cand.isBlank()) return false
         if (exp == cand) return true
         if (cand.contains(exp) || exp.contains(cand)) return true
