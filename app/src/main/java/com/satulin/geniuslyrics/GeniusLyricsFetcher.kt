@@ -201,11 +201,12 @@ object GeniusLyricsFetcher {
 
         // 2. Transliterated / Latin converted title words
         if (t.isNotBlank()) {
-            var transTitle = t
-            for ((cyr, lat) in TITLE_WORD_MAP) {
-                transTitle = transTitle.replace(Regex("\\b$cyr\\b", RegexOption.IGNORE_CASE), lat)
+            val words = t.split(Regex("\\s+")).map { word ->
+                val lower = word.lowercase()
+                TITLE_WORD_MAP[lower] ?: word
             }
-            if (transTitle != t) {
+            val transTitle = words.joinToString(" ")
+            if (!transTitle.equals(t, ignoreCase = true)) {
                 if (a.isNotBlank()) {
                     addCandidate(a, transTitle)
                     addCandidate("", "$a $transTitle")
