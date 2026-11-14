@@ -37,7 +37,7 @@ class MediaNotificationListener : NotificationListenerService() {
         var currentDurationMs: Long = 0L
         var lastPositionUpdateTime: Long = 0L
 
-        // Russian rap & hip-hop artists, aliases, and SoundCloud common slang mappings
+        // Complete Russian & International hip-hop, rap, underground & SoundCloud artist alias dictionary
         val ARTIST_ALIASES: List<Pair<String, String>> = listOf(
             // Multi-word aliases first (so longest match wins)
             Pair("friendly thug 52 ngg", "FRIENDLY THUG 52 NGG"),
@@ -48,6 +48,7 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("52 ngg", "FRIENDLY THUG 52 NGG"),
             Pair("big baby tape", "Big Baby Tape"),
             Pair("биг бейби тейп", "Big Baby Tape"),
+            Pair("биг бэйби тейп", "Big Baby Tape"),
             Pair("bb tape", "Big Baby Tape"),
             Pair("scally milano", "Scally Milano"),
             Pair("скалли милано", "Scally Milano"),
@@ -67,6 +68,7 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("ог буда", "OG Buda"),
             Pair("три дня дождя", "Три дня дождя"),
             Pair("мэйби бэйби", "Мэйби Бэйби"),
+            Pair("мейби бейби", "Мэйби Бэйби"),
             Pair("maybe baby", "Мэйби Бэйби"),
             Pair("мияги и эндшпиль", "Miyagi & Andy Panda"),
             Pair("miyagi & andy panda", "Miyagi & Andy Panda"),
@@ -80,6 +82,41 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("сода лав", "Soda Luv"),
             Pair("thomas mraz", "Thomas Mraz"),
             Pair("томас мраз", "Thomas Mraz"),
+            Pair("playboi carti", "Playboi Carti"),
+            Pair("плейбой карти", "Playboi Carti"),
+            Pair("кен карсон", "Ken Carson"),
+            Pair("ken carson", "Ken Carson"),
+            Pair("дестрой лонли", "Destroy Lonely"),
+            Pair("destroy lonely", "Destroy Lonely"),
+            Pair("тревис скотт", "Travis Scott"),
+            Pair("travis scott", "Travis Scott"),
+            Pair("лил узи верт", "Lil Uzi Vert"),
+            Pair("lil uzi vert", "Lil Uzi Vert"),
+            Pair("лил узи", "Lil Uzi Vert"),
+            Pair("метро бумин", "Metro Boomin"),
+            Pair("metro boomin", "Metro Boomin"),
+            Pair("дон толивер", "Don Toliver"),
+            Pair("don toliver", "Don Toliver"),
+            Pair("чиф киф", "Chief Keef"),
+            Pair("chief keef", "Chief Keef"),
+            Pair("джус ворлд", "Juice WRLD"),
+            Pair("juice wrld", "Juice WRLD"),
+            Pair("пепел нахуди", "Pepel Nahudi"),
+            Pair("pepel nahudi", "Pepel Nahudi"),
+            Pair("беби мело", "Baby Melo"),
+            Pair("бейби мело", "Baby Melo"),
+            Pair("baby melo", "Baby Melo"),
+            Pair("аглистефан", "uglystephan"),
+            Pair("uglystephan", "uglystephan"),
+            Pair("вайт панк", "White Punk"),
+            Pair("white punk", "White Punk"),
+            Pair("худ рич лука", "Hood Rich Luka"),
+            Pair("hood rich luka", "Hood Rich Luka"),
+            Pair("лил кристал", "LIL KRYSTALL"),
+            Pair("lil krystalll", "LIL KRYSTALL"),
+            Pair("lil krystall", "LIL KRYSTALL"),
+            Pair("серега пират", "Серега Пират"),
+            Pair("serega pirat", "Серега Пират"),
             // Single-word aliases
             Pair("рокет", "ROCKET"),
             Pair("рокета", "ROCKET"),
@@ -88,10 +125,12 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("тейпа", "Big Baby Tape"),
             Pair("буда", "OG Buda"),
             Pair("буды", "OG Buda"),
+            Pair("будочка", "OG Buda"),
             Pair("кизару", "kizaru"),
             Pair("kizaru", "kizaru"),
             Pair("киза", "kizaru"),
             Pair("макан", "MACAN"),
+            Pair("макана", "MACAN"),
             Pair("macan", "MACAN"),
             Pair("платина", "Платина"),
             Pair("platina", "Платина"),
@@ -110,6 +149,7 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("шадоурейз", "shadowraze"),
             Pair("shadowraze", "shadowraze"),
             Pair("вайпер", "Viperr"),
+            Pair("вайперр", "Viperr"),
             Pair("viperr", "Viperr"),
             Pair("9mice", "9mice"),
             Pair("9майс", "9mice"),
@@ -130,6 +170,9 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("токса", "TOXI$"),
             Pair("toxi$", "TOXI$"),
             Pair("toxis", "TOXI$"),
+            Pair("ловв66", "LOVV66"),
+            Pair("лов66", "LOVV66"),
+            Pair("lovv66", "LOVV66"),
             Pair("сими", "Seemee"),
             Pair("seemee", "Seemee"),
             Pair("яникс", "Yanix"),
@@ -163,7 +206,36 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("аник", "ANIKV"),
             Pair("anikv", "ANIKV"),
             Pair("аарне", "Aarne"),
-            Pair("aarne", "Aarne")
+            Pair("aarne", "Aarne"),
+            Pair("карти", "Playboi Carti"),
+            Pair("carti", "Playboi Carti"),
+            Pair("йит", "Yeat"),
+            Pair("ит", "Yeat"),
+            Pair("yeat", "Yeat"),
+            Pair("дрейк", "Drake"),
+            Pair("drake", "Drake"),
+            Pair("тревис", "Travis Scott"),
+            Pair("travis", "Travis Scott"),
+            Pair("канье", "Kanye West"),
+            Pair("kanye", "Kanye West"),
+            Pair("узи", "Lil Uzi Vert"),
+            Pair("uzi", "Lil Uzi Vert"),
+            Pair("фьючер", "Future"),
+            Pair("future", "Future"),
+            Pair("ганна", "Gunna"),
+            Pair("gunna", "Gunna"),
+            Pair("баста", "Баста"),
+            Pair("basta", "Баста"),
+            Pair("гуф", "Guf"),
+            Pair("guf", "Guf"),
+            Pair("айсгергерт", "ICEGERGERT"),
+            Pair("icegergert", "ICEGERGERT"),
+            Pair("пинки", "PINQ"),
+            Pair("pinq", "PINQ"),
+            Pair("курсед", "zxcursed"),
+            Pair("zxcursed", "zxcursed"),
+            Pair("акума", "akumaqqe"),
+            Pair("akumaqqe", "akumaqqe")
         )
 
         fun sanitizeText(text: String?): String {
@@ -173,6 +245,24 @@ class MediaNotificationListener : NotificationListenerService() {
                 return ""
             }
             return trimmed
+        }
+
+        fun stripNoise(title: String): String {
+            var s = sanitizeText(title)
+            if (s.isBlank()) return ""
+
+            // Strip noise in square brackets [slowed], [prod. ...], [remastered], etc.
+            s = s.replace(Regex("\\[.*?(slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster).*?\\]", RegexOption.IGNORE_CASE), "")
+            // Strip noise in parentheses (slowed + reverb), (prod. by ...), etc.
+            s = s.replace(Regex("\\(.*?(slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster).*?\\)", RegexOption.IGNORE_CASE), "")
+            // Strip trailing "prod. by ...", "ft. ...", "feat. ..."
+            s = s.replace(Regex("\\b(prod\\.?|by|feat\\.?|ft\\.?)\\s+.*$", RegexOption.IGNORE_CASE), "")
+            // Strip file extensions .mp3, .wav, .flac
+            s = s.replace(Regex("\\.(mp3|wav|flac|m4a)$", RegexOption.IGNORE_CASE), "")
+            // Strip quotes
+            s = s.replace(Regex("[\"\'«»“”]"), "")
+
+            return s.trim()
         }
 
         fun findKnownArtist(s: String?): String? {
@@ -202,13 +292,6 @@ class MediaNotificationListener : NotificationListenerService() {
                 return ParsedTrack(title = "", artist = mappedOnlyArtist)
             }
 
-            // Strip noise: [slowed], [reverb], (prod. by ...), .mp3
-            cleanTitle = cleanTitle
-                .replace(Regex("\\[.*?(slowed|reverb|speed|sped|bass|remix|edit|nightcore|official|hq).*?\\]", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(.*?(slowed|reverb|speed|sped|bass|prod|remix|edit|nightcore|official|hq).*?\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\.(mp3|wav|flac|m4a)$", RegexOption.IGNORE_CASE), "")
-                .trim()
-
             // 1. Check dash separator: " - ", " — ", " – " (Could be Artist - Title OR Title - Artist!)
             val seps = listOf(" - ", " — ", " – ")
             for (sep in seps) {
@@ -220,24 +303,24 @@ class MediaNotificationListener : NotificationListenerService() {
                     // Case A: p2 is a known artist (e.g. "Drive Home - ROCKET" or "Drive Home - рокет")
                     val p2Artist = findKnownArtist(p2)
                     if (p2Artist != null && p1.isNotBlank()) {
-                        return ParsedTrack(title = p1, artist = p2Artist)
+                        return ParsedTrack(title = stripNoise(p1), artist = p2Artist)
                     }
 
                     // Case B: p1 is a known artist (e.g. "ROCKET - Drive Home" or "рокет - Drive Home")
                     val p1Artist = findKnownArtist(p1)
                     if (p1Artist != null && p2.isNotBlank()) {
-                        return ParsedTrack(title = p2, artist = p1Artist)
+                        return ParsedTrack(title = stripNoise(p2), artist = p1Artist)
                     }
 
-                    // Case C: Standard dash fallback
+                    // Case C: Standard dash: assume p1 is artist, p2 is title
                     if (p1.isNotBlank() && p2.isNotBlank()) {
                         val mapped = canonicalizeArtist(cleanArtistWord(p1))
-                        return ParsedTrack(title = p2, artist = mapped)
+                        return ParsedTrack(title = stripNoise(p2), artist = mapped)
                     }
                 }
             }
 
-            // 2. Check brackets: "Drive Home (рокет)" or "Drive Home [рокет]" or "Drive Home (feat. рокет)"
+            // 2. Check brackets at the end: "Drive Home (рокет)" or "Drive Home [рокет]" or "Drive Home (feat. рокет)"
             val bracketRegex = Regex("[\\(\\[](?:feat\\.?|ft\\.?|prod\\.?|by)?\\s*([a-zA-Z0-9а-яА-ЯёЁ\\s$]+)[\\)\\]]$", RegexOption.IGNORE_CASE)
             val bracketMatch = bracketRegex.find(cleanTitle)
             if (bracketMatch != null) {
@@ -246,7 +329,7 @@ class MediaNotificationListener : NotificationListenerService() {
                 if (artistInBracket != null) {
                     val rest = cleanTitle.substring(0, bracketMatch.range.first).trim()
                     if (rest.isNotBlank()) {
-                        return ParsedTrack(title = rest, artist = artistInBracket)
+                        return ParsedTrack(title = stripNoise(rest), artist = artistInBracket)
                     }
                 }
             }
@@ -260,7 +343,7 @@ class MediaNotificationListener : NotificationListenerService() {
                 if (artistBy != null) {
                     val rest = cleanTitle.substring(0, byMatch.range.first).trim()
                     if (rest.isNotBlank()) {
-                        return ParsedTrack(title = rest, artist = artistBy)
+                        return ParsedTrack(title = stripNoise(rest), artist = artistBy)
                     }
                 }
             }
@@ -271,12 +354,12 @@ class MediaNotificationListener : NotificationListenerService() {
                 val alias = pair.first
                 val canonical = pair.second
                 if (lower == alias) {
-                    return ParsedTrack(title = cleanTitle, artist = canonical)
+                    return ParsedTrack(title = stripNoise(cleanTitle), artist = canonical)
                 }
                 if (lower.startsWith("$alias ")) {
                     val rest = cleanTitle.substring(alias.length).trim()
                     if (rest.isNotBlank()) {
-                        return ParsedTrack(title = rest, artist = canonical)
+                        return ParsedTrack(title = stripNoise(rest), artist = canonical)
                     }
                 }
             }
@@ -284,11 +367,11 @@ class MediaNotificationListener : NotificationListenerService() {
             // 5. If rawArtist was provided (e.g. SoundCloud uploader or Spotify/Yandex artist)
             if (cleanRawArtist.isNotBlank()) {
                 val mappedArtist = canonicalizeArtist(cleanArtistWord(cleanRawArtist))
-                return ParsedTrack(title = cleanTitle, artist = mappedArtist)
+                return ParsedTrack(title = stripNoise(cleanTitle), artist = mappedArtist)
             }
 
             // 6. Default: title alone
-            return ParsedTrack(title = cleanTitle, artist = "")
+            return ParsedTrack(title = stripNoise(cleanTitle), artist = "")
         }
 
         private fun cleanArtistWord(raw: String): String {
@@ -448,37 +531,27 @@ class MediaNotificationListener : NotificationListenerService() {
         val knownApps = listOf(
             "com.soundcloud.android",
             "com.spotify.music",
-            "com.google.android.apps.youtube.music",
-            "ru.yandex.music",
             "com.vkontakte.android",
-            "com.vk.vkclient",
+            "com.vk.music",
+            "ru.yandex.music",
             "com.apple.android.music",
-            "com.deezer.android.app",
-            "com.maxmpz.audioplayer",
-            "org.videolan.vlc",
-            "com.aimp.player"
+            "com.google.android.apps.youtube.music",
+            "deezer.android.app"
         )
-        return knownApps.any { packageName.contains(it, ignoreCase = true) }
+        return knownApps.any { packageName.startsWith(it) }
     }
 
     private fun isNotificationPlaying(notification: Notification): Boolean {
         val actions = notification.actions ?: return true
         for (action in actions) {
             val title = action.title?.toString()?.lowercase() ?: ""
-            if (title.contains("pause") || title.contains("пауз")) {
+            if (title.contains("pause") || title.contains("пауза")) {
                 return true
             }
-            if (title.contains("play") || title.contains("воспроизв") || title.contains("играть")) {
+            if (title.contains("play") || title.contains("воспроизвести") || title.contains("играть")) {
                 return false
             }
         }
         return true
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        try {
-            activeMediaController?.unregisterCallback(mediaControllerCallback)
-        } catch (ignored: Exception) {}
     }
 }
