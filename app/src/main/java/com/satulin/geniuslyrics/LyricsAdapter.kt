@@ -60,28 +60,28 @@ class LyricsAdapter(
             tvLine.textSize = if (isHeader) fontSize - 3f else fontSize
 
             if (isHeader) {
-                // Section header like [Chorus], [Verse]
-                tvLine.setTextColor(Color.parseColor("#80FFFFFF"))
+                // Section tags like [Припев], [Куплет 1]
+                tvLine.setTextColor(Color.parseColor("#708090"))
                 tvLine.setTypeface(null, Typeface.BOLD)
-                tvLine.alpha = 0.65f
+                tvLine.alpha = 0.8f
                 itemView.scaleX = 0.98f
                 itemView.scaleY = 0.98f
             } else if (isActive) {
-                // Active sung line: vibrant Genius Yellow, sharp bold, smoothly scaled & highlighted
-                tvLine.setTextColor(Color.parseColor("#FFFF64"))
+                // Active sung line: vibrant Neon Mint Cyan, bold, smoothly scaled & highlighted
+                tvLine.setTextColor(Color.parseColor("#00F5D4"))
                 tvLine.setTypeface(null, Typeface.BOLD)
                 tvLine.alpha = 1.0f
                 itemView.animate()
-                    .scaleX(1.05f)
-                    .scaleY(1.05f)
+                    .scaleX(1.06f)
+                    .scaleY(1.06f)
                     .translationX(12f)
                     .setDuration(240)
                     .start()
             } else {
-                // Inactive line: 100% sharp clear text without blur
+                // Inactive line: 100% sharp clear text without blur, readable white
                 tvLine.setTextColor(Color.parseColor("#B3FFFFFF"))
                 tvLine.setTypeface(null, Typeface.NORMAL)
-                tvLine.alpha = 0.75f
+                tvLine.alpha = 0.72f
                 itemView.animate()
                     .scaleX(1.0f)
                     .scaleY(1.0f)

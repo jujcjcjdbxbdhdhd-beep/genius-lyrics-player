@@ -1,10 +1,10 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.GeniusLyrics" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="colorPrimary">@color/genius_yellow</item>
+        <item name="colorPrimary">@color/accent_primary</item>
         <item name="colorOnPrimary">#000000</item>
-        <item name="android:statusBarColor">@color/background_dark</item>
-        <item name="android:navigationBarColor">@color/background_dark</item>
-        <item name="android:windowBackground">@color/background_dark</item>
-        <item name="colorSurface">@color/card_dark</item>
+        <item name="android:statusBarColor">@color/bg_main</item>
+        <item name="android:navigationBarColor">@color/bg_main</item>
+        <item name="android:windowBackground">@color/bg_main</item>
+        <item name="colorSurface">@color/bg_card</item>
     </style>
 </resources>

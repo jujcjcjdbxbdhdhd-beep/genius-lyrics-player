@@ -21,6 +21,7 @@ class MediaNotificationListener : NotificationListenerService() {
 
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_ARTIST = "extra_artist"
+        const val EXTRA_RAW_TITLE = "extra_raw_title"
         const val EXTRA_PACKAGE = "extra_package"
         const val EXTRA_IS_PLAYING = "extra_is_playing"
         const val EXTRA_POSITION_MS = "extra_position_ms"
@@ -29,6 +30,7 @@ class MediaNotificationListener : NotificationListenerService() {
 
         var currentTitle: String? = null
         var currentArtist: String? = null
+        var currentRawTitle: String? = null
         var currentPackage: String? = null
         var isPlaying: Boolean = false
         var currentPositionMs: Long = 0L
@@ -74,7 +76,6 @@ class MediaNotificationListener : NotificationListenerService() {
             return
         }
 
-        // Attach MediaController if session token is present
         if (mediaSessionToken != null) {
             try {
                 activeMediaController?.unregisterCallback(mediaControllerCallback)
@@ -89,31 +90,33 @@ class MediaNotificationListener : NotificationListenerService() {
             }
         }
 
-        val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
-        val rawArtist = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-            ?: extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()
+        val rawTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
+        val rawArtist = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            ?: extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+            ?: ""
 
-        if (rawTitle.isNullOrBlank()) return
+        if (rawTitle.isBlank() || rawTitle.equals("null", ignoreCase = true)) return
 
-        val title = cleanTitle(rawTitle)
-        val artist = cleanArtist(rawArtist?.trim() ?: "")
         val pkg = sbn.packageName
+        val parsed = parseTrackInfo(rawTitle, rawArtist, pkg)
         val playing = isNotificationPlaying(notification)
 
-        if (title == currentTitle && artist == currentArtist && playing == isPlaying) {
+        if (parsed.title == currentTitle && parsed.artist == currentArtist && playing == isPlaying) {
             return
         }
 
-        currentTitle = title
-        currentArtist = artist
+        currentTitle = parsed.title
+        currentArtist = parsed.artist
+        currentRawTitle = rawTitle
         currentPackage = pkg
         isPlaying = playing
 
-        Log.d(TAG, "Detected Track: $title by $artist (App: $pkg, Playing: $playing)")
+        Log.d(TAG, "Detected: title='${parsed.title}', artist='${parsed.artist}', raw='$rawTitle' (Pkg: $pkg)")
 
         val intent = Intent(ACTION_TRACK_CHANGED).apply {
-            putExtra(EXTRA_TITLE, title)
-            putExtra(EXTRA_ARTIST, artist)
+            putExtra(EXTRA_TITLE, parsed.title)
+            putExtra(EXTRA_ARTIST, parsed.artist)
+            putExtra(EXTRA_RAW_TITLE, rawTitle)
             putExtra(EXTRA_PACKAGE, pkg)
             putExtra(EXTRA_IS_PLAYING, playing)
             putExtra(EXTRA_POSITION_MS, currentPositionMs)
@@ -125,23 +128,25 @@ class MediaNotificationListener : NotificationListenerService() {
     }
 
     private fun updateMetadata(metadata: MediaMetadata) {
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
-        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
+        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim() ?: ""
+        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim() ?: ""
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
 
         if (duration > 0) {
             currentDurationMs = duration
         }
 
-        if (!title.isNullOrBlank()) {
-            val cleanedTitle = cleanTitle(title)
-            val cleanedArtist = cleanArtist(artist ?: "")
-            if (cleanedTitle != currentTitle || cleanedArtist != currentArtist) {
-                currentTitle = cleanedTitle
-                currentArtist = cleanedArtist
+        if (title.isNotBlank() && !title.equals("null", ignoreCase = true)) {
+            val parsed = parseTrackInfo(title, artist, currentPackage ?: "")
+            if (parsed.title != currentTitle || parsed.artist != currentArtist) {
+                currentTitle = parsed.title
+                currentArtist = parsed.artist
+                currentRawTitle = title
+
                 val intent = Intent(ACTION_TRACK_CHANGED).apply {
-                    putExtra(EXTRA_TITLE, cleanedTitle)
-                    putExtra(EXTRA_ARTIST, cleanedArtist)
+                    putExtra(EXTRA_TITLE, parsed.title)
+                    putExtra(EXTRA_ARTIST, parsed.artist)
+                    putExtra(EXTRA_RAW_TITLE, title)
                     putExtra(EXTRA_PACKAGE, currentPackage ?: "")
                     putExtra(EXTRA_IS_PLAYING, isPlaying)
                     putExtra(EXTRA_POSITION_MS, currentPositionMs)
@@ -179,6 +184,7 @@ class MediaNotificationListener : NotificationListenerService() {
 
     private fun isKnownMusicApp(packageName: String): Boolean {
         val knownApps = listOf(
+            "com.soundcloud.android",
             "com.spotify.music",
             "com.google.android.apps.youtube.music",
             "ru.yandex.music",
@@ -187,7 +193,6 @@ class MediaNotificationListener : NotificationListenerService() {
             "com.apple.android.music",
             "com.deezer.android.app",
             "com.maxmpz.audioplayer",
-            "com.soundcloud.android",
             "org.videolan.vlc",
             "com.aimp.player"
         )
@@ -208,21 +213,70 @@ class MediaNotificationListener : NotificationListenerService() {
         return true
     }
 
-    private fun cleanTitle(raw: String): String {
-        return raw.replace(Regex("\\(feat\\..*?\\)", RegexOption.IGNORE_CASE), "")
+    data class ParsedTrack(val title: String, val artist: String)
+
+    private fun parseTrackInfo(rawTitle: String, rawArtist: String, packageName: String): ParsedTrack {
+        // Sanitize string "null"
+        val cleanRawArtist = if (rawArtist.equals("null", ignoreCase = true)) "" else rawArtist
+
+        // Remove junk tags first: (prod. by ...), [bass boosted], (slowed + reverb), etc.
+        var cleanedTitle = stripJunkTags(rawTitle)
+
+        // If title contains " - " or " — ", like in SoundCloud: "FRIENDLY THUG 52 NGG - Calma"
+        val dashSeparators = listOf(" - ", " — ", " – ")
+        for (sep in dashSeparators) {
+            if (cleanedTitle.contains(sep)) {
+                val parts = cleanedTitle.split(sep, limit = 2)
+                val partArtist = parts[0].trim()
+                val partTitle = parts[1].trim()
+
+                // In SoundCloud: Artist is usually part 1, and Title is part 2
+                if (partArtist.isNotBlank() && partTitle.isNotBlank()) {
+                    return ParsedTrack(
+                        title = partTitle,
+                        artist = cleanArtist(partArtist)
+                    )
+                }
+            }
+        }
+
+        // If no dash separator, but artist was provided in notification text (Spotify/Yandex)
+        if (cleanRawArtist.isNotBlank()) {
+            return ParsedTrack(
+                title = cleanedTitle,
+                artist = cleanArtist(cleanRawArtist)
+            )
+        }
+
+        // Single title without dash and without separate artist
+        return ParsedTrack(title = cleanedTitle, artist = "")
+    }
+
+    private fun stripJunkTags(raw: String): String {
+        return raw
+            // Remove brackets containing metadata: [slowed], [reverb], (prod. by ...), [bass boosted]
+            .replace(Regex("\\[.*?(slowed|reverb|speed|sped|bass|prod|remix|edit|nightcore|official|hq).*?\\]", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(.*?(slowed|reverb|speed|sped|bass|prod|remix|edit|nightcore|official|hq).*?\\)", RegexOption.IGNORE_CASE), "")
+            // General brackets at end
+            .replace(Regex("\\(prod\\..*?\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\[prod\\..*?\\]", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(feat\\..*?\\)", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\[feat\\..*?\\]", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\(ft\\..*?\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\(Official.*?\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\[Official.*?\\]", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\[ft\\..*?\\]", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(Official Video\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\[Official Video\\]", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\(Remastered.*?\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\(Slowed.*?\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\(Speed Up.*?\\)", RegexOption.IGNORE_CASE), "")
+            // Remove stray file extensions or SoundCloud suffixes
+            .replace(Regex("\\.(mp3|wav|flac|m4a)$", RegexOption.IGNORE_CASE), "")
             .trim()
     }
 
     private fun cleanArtist(raw: String): String {
+        if (raw.equals("null", ignoreCase = true)) return ""
         return raw.replace(Regex(",.*"), "")
             .replace(Regex("feat\\..*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("ft\\..*", RegexOption.IGNORE_CASE), "")
             .trim()
     }
 

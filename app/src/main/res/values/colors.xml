@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="genius_yellow">#FFFF64</color>
-    <color name="genius_yellow_dark">#E6E600</color>
-    <color name="background_dark">#121212</color>
-    <color name="card_dark">#1E1E1E</color>
-    <color name="card_elevated">#282828</color>
-    <color name="surface_variant">#333333</color>
+    <!-- Modern Spotify / Cyberpunk Luxury Dark Theme -->
+    <color name="bg_main">#0B0E14</color>
+    <color name="bg_card">#131922</color>
+    <color name="bg_surface">#1C2331</color>
+    <color name="bg_chip">#252E3E</color>
+    
+    <!-- Neon Accents -->
+    <color name="accent_primary">#00F5D4</color>
+    <color name="accent_yellow">#FFE600</color>
+    <color name="accent_spotify">#1DB954</color>
+    <color name="accent_soundcloud">#FF5500</color>
+    
+    <!-- Crisp Text & Glass Accents -->
     <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#AAAAAA</color>
-    <color name="text_tertiary">#777777</color>
-    <color name="accent_green">#1DB954</color>
-    <color name="overlay_background">#E6181818</color>
-    <color name="divider_color">#2C2C2C</color>
+    <color name="text_secondary">#9DA8BA</color>
+    <color name="text_muted">#5B667A</color>
+    <color name="border_subtle">#222B3B</color>
+    <color name="overlay_window">#F00E121A</color>
 </resources>

@@ -37,10 +37,10 @@ class MainActivity : AppCompatActivity() {
 
     private var activeTitle: String = ""
     private var activeArtist: String = ""
+    private var activeRawTitle: String = ""
     private var currentLyricsResult: LyricsResult? = null
     private var lyricsLines: List<LyricLine> = emptyList()
 
-    // Real-time playback tracking for exact karaoke timing
     private var isMediaPlaying = false
     private var lastKnownPositionMs = 0L
     private var lastUpdateTimeSystem = 0L
@@ -51,12 +51,13 @@ class MainActivity : AppCompatActivity() {
                 MediaNotificationListener.ACTION_TRACK_CHANGED -> {
                     val title = intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE) ?: ""
                     val artist = intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST) ?: ""
+                    val rawTitle = intent.getStringExtra(MediaNotificationListener.EXTRA_RAW_TITLE) ?: ""
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
 
                     updatePlaybackTime(pos, updated, isPlaying)
-                    onTrackUpdated(title, artist, isPlaying)
+                    onTrackUpdated(title, artist, rawTitle, isPlaying)
                 }
                 MediaNotificationListener.ACTION_PLAYBACK_STATE -> {
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
@@ -108,6 +109,7 @@ class MainActivity : AppCompatActivity() {
 
         val currentTitle = MediaNotificationListener.currentTitle
         val currentArtist = MediaNotificationListener.currentArtist
+        val currentRawTitle = MediaNotificationListener.currentRawTitle
         if (!currentTitle.isNullOrBlank()) {
             updatePlaybackTime(
                 MediaNotificationListener.currentPositionMs,
@@ -117,6 +119,7 @@ class MainActivity : AppCompatActivity() {
             onTrackUpdated(
                 currentTitle,
                 currentArtist ?: "",
+                currentRawTitle ?: currentTitle,
                 MediaNotificationListener.isPlaying
             )
         }
@@ -212,11 +215,11 @@ class MainActivity : AppCompatActivity() {
         isAutoScrolling = !isAutoScrolling
         if (isAutoScrolling) {
             binding.btnToggleScroll.text = "⏸ Пауза"
-            binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#333333"))
+            binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#1C2331"))
             startAutoScrollLoop()
         } else {
             binding.btnToggleScroll.text = "▶ Автопрокрутка"
-            binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#282828"))
+            binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#131922"))
             stopAutoScroll()
         }
     }
@@ -229,7 +232,6 @@ class MainActivity : AppCompatActivity() {
                     val isSynced = currentLyricsResult?.isSynced == true
 
                     if (isSynced && isMediaPlaying) {
-                        // Precise millisecond timing for synced karaoke lyrics!
                         val currentMs = getCurrentTrackPosition()
                         var bestIndex = -1
                         for (i in lyricsLines.indices) {
@@ -245,9 +247,8 @@ class MainActivity : AppCompatActivity() {
                             selectLine(bestIndex, smoothScroll = true)
                         }
 
-                        delay(150)
+                        delay(120)
                     } else {
-                        // Non-synced fallback: reading delay adjusted by words & speed factor
                         val currentIndex = lyricsAdapter.activeLineIndex
                         val nextIndex = if (currentIndex + 1 < lyricsLines.size) currentIndex + 1 else 0
 
@@ -298,14 +299,14 @@ class MainActivity : AppCompatActivity() {
     private fun updatePlayStatusBadge(isPlaying: Boolean) {
         if (isPlaying) {
             binding.tvStatusBadge.text = "● ИГРАЕТ"
-            binding.tvStatusBadge.setTextColor(Color.parseColor("#1DB954"))
+            binding.tvStatusBadge.setTextColor(Color.parseColor("#00F5D4"))
         } else {
             binding.tvStatusBadge.text = "● ПАУЗА"
-            binding.tvStatusBadge.setTextColor(Color.parseColor("#888888"))
+            binding.tvStatusBadge.setTextColor(Color.parseColor("#5B667A"))
         }
     }
 
-    private fun onTrackUpdated(title: String, artist: String, isPlaying: Boolean) {
+    private fun onTrackUpdated(title: String, artist: String, rawTitle: String, isPlaying: Boolean) {
         if (title.isBlank()) return
         updatePlayStatusBadge(isPlaying)
 
@@ -315,11 +316,12 @@ class MainActivity : AppCompatActivity() {
 
         activeTitle = title
         activeArtist = artist
+        activeRawTitle = rawTitle
 
         binding.tvSongTitle.text = title
-        binding.tvSongArtist.text = if (artist.isNotBlank()) artist else "Неизвестный исполнитель"
+        binding.tvSongArtist.text = if (artist.isNotBlank()) artist else "SoundCloud Track"
 
-        loadLyrics(artist, title)
+        loadLyrics(artist, title, rawTitle)
     }
 
     private fun performManualSearch() {
@@ -335,19 +337,19 @@ class MainActivity : AppCompatActivity() {
         binding.tvSongTitle.text = query
         binding.tvSongArtist.text = "Поиск по запросу"
         binding.tvStatusBadge.text = "● ПОИСК"
-        binding.tvStatusBadge.setTextColor(Color.parseColor("#FFFF64"))
+        binding.tvStatusBadge.setTextColor(Color.parseColor("#00F5D4"))
 
-        loadLyrics("", query)
+        loadLyrics("", query, query)
     }
 
-    private fun loadLyrics(artist: String, title: String) {
+    private fun loadLyrics(artist: String, title: String, rawTitle: String) {
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-        binding.tvLyricsPlaceholder.text = "Поиск оригинального текста..."
+        binding.tvLyricsPlaceholder.text = "Ищем текст на Genius и базах..."
         binding.rvLyrics.visibility = View.GONE
 
         lifecycleScope.launch {
-            val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title)
+            val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title, rawTitle)
             binding.progressBar.visibility = View.GONE
 
             result.onSuccess { lyricsResult ->
@@ -359,9 +361,12 @@ class MainActivity : AppCompatActivity() {
                 lyricsAdapter.submitLines(lyricsLines)
                 selectLine(0, smoothScroll = false)
 
-                val syncBadge = if (lyricsResult.isSynced) " [Караоке-синхрон]" else ""
-                binding.tvSongArtist.text = (if (artist.isNotBlank()) artist else "Неизвестный исполнитель") +
-                        " • ${lyricsResult.sourceName}$syncBadge"
+                binding.tvSourceBadge.text = lyricsResult.sourceName
+                val displayArtist = if (lyricsResult.artist.isNotBlank()) lyricsResult.artist else artist
+                val displayTitle = if (lyricsResult.title.isNotBlank()) lyricsResult.title else title
+                
+                binding.tvSongTitle.text = displayTitle
+                binding.tvSongArtist.text = if (displayArtist.isNotBlank()) displayArtist else "SoundCloud"
 
                 if (isAutoScrolling) {
                     startAutoScrollLoop()

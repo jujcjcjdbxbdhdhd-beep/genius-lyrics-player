@@ -4,21 +4,21 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background_dark"
+    android:background="@color/bg_main"
     android:padding="16dp">
 
-    <!-- Notification Access Permission Card (Hidden once granted) -->
+    <!-- Notification Access Permission Banner (Shown only if permission missing) -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardPermission"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="12dp"
         android:visibility="gone"
-        app:cardBackgroundColor="#2A1B18"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="4dp"
+        app:cardBackgroundColor="#2A1715"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="0dp"
         app:layout_constraintTop_toTopOf="parent"
-        app:strokeColor="#FF6B4A"
+        app:strokeColor="#FF5500"
         app:strokeWidth="1dp">
 
         <LinearLayout
@@ -30,43 +30,44 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/permission_required_title"
-                android:textColor="#FF8A65"
-                android:textSize="16sp"
+                android:text="Доступ к уведомлениям"
+                android:textColor="#FF7A33"
+                android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="@string/permission_required_desc"
+                android:text="Разрешите доступ, чтобы автоматически считывать треки из SoundCloud, Spotify и других плееров."
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnGrantPermission"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:backgroundTint="#FF6B4A"
-                android:text="@string/grant_permission"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#FF5500"
+                android:text="Предоставить доступ"
                 android:textColor="#FFFFFF"
+                android:textSize="12sp"
                 android:textStyle="bold"
-                app:cornerRadius="20dp" />
+                app:cornerRadius="19dp" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Top Bar: Now Playing Header -->
+    <!-- Top Premium Card: Now Playing Track Info -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardNowPlaying"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        app:cardBackgroundColor="@color/card_dark"
-        app:cardCornerRadius="16dp"
-        app:cardElevation="2dp"
+        android:layout_marginTop="2dp"
+        app:cardBackgroundColor="@color/bg_card"
+        app:cardCornerRadius="20dp"
+        app:cardElevation="0dp"
         app:layout_constraintTop_toBottomOf="@id/cardPermission"
-        app:strokeColor="@color/divider_color"
+        app:strokeColor="@color/border_subtle"
         app:strokeWidth="1dp">
 
         <LinearLayout
@@ -75,6 +76,7 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <!-- Status Badges row -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -87,9 +89,22 @@
                     android:layout_height="wrap_content"
                     android:background="@drawable/pill_background"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="3dp"
-                    android:text="● ОЖИДАНИЕ"
-                    android:textColor="@color/text_tertiary"
+                    android:paddingVertical="4dp"
+                    android:text="● ОЖИДАНИЕ ТРЕКА"
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSourceBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/pill_background"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:text="Genius Live"
+                    android:textColor="@color/accent_primary"
                     android:textSize="11sp"
                     android:textStyle="bold" />
 
@@ -98,28 +113,27 @@
                     android:layout_height="1dp"
                     android:layout_weight="1" />
 
-                <!-- Floating overlay window button -->
+                <!-- Floating overlay icon -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnToggleFloating"
                     style="@style/Widget.Material3.Button.IconButton"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
-                    android:tooltipText="Плавающее окно поверх других приложений"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
                     app:icon="@android:drawable/ic_menu_crop"
-                    app:iconTint="@color/genius_yellow" />
+                    app:iconTint="@color/accent_primary" />
             </LinearLayout>
 
             <TextView
                 android:id="@+id/tvSongTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:ellipsize="end"
+                android:fontFamily="sans-serif-black"
                 android:maxLines="2"
-                android:text="@string/waiting_for_music"
+                android:text="Включите песню"
                 android:textColor="@color/text_primary"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:textSize="22sp" />
 
             <TextView
                 android:id="@+id/tvSongArtist"
@@ -128,13 +142,13 @@
                 android:layout_marginTop="2dp"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:text="@string/waiting_hint"
+                android:text="SoundCloud • Spotify • VK • Яндекс"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Manual Search Section -->
+    <!-- Sleek Neon Search Bar -->
     <LinearLayout
         android:id="@+id/layoutSearch"
         android:layout_width="match_parent"
@@ -150,27 +164,27 @@
             android:layout_height="44dp"
             android:layout_weight="1"
             android:background="@drawable/pill_background"
-            android:hint="@string/search_hint"
+            android:hint="Поиск трека с SoundCloud или Genius…"
             android:imeOptions="actionSearch"
             android:inputType="text"
             android:paddingHorizontal="16dp"
             android:textColor="@color/text_primary"
-            android:textColorHint="@color/text_tertiary"
-            android:textSize="14sp" />
+            android:textColorHint="@color/text_muted"
+            android:textSize="13sp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnManualSearch"
             android:layout_width="wrap_content"
             android:layout_height="44dp"
             android:layout_marginStart="8dp"
-            android:backgroundTint="@color/genius_yellow"
+            android:backgroundTint="@color/accent_primary"
             android:text="Найти"
             android:textColor="#000000"
             android:textStyle="bold"
             app:cornerRadius="22dp" />
     </LinearLayout>
 
-    <!-- Auto-Scroll & Controls Bar -->
+    <!-- Interactive Auto-Scroll & Controls Bar -->
     <LinearLayout
         android:id="@+id/layoutControls"
         android:layout_width="match_parent"
@@ -180,33 +194,30 @@
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingHorizontal="12dp"
-        android:paddingVertical="8dp"
+        android:paddingVertical="6dp"
         app:layout_constraintTop_toBottomOf="@id/layoutSearch">
 
-        <!-- Play/Pause Auto-scroll -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnToggleScroll"
             style="@style/Widget.Material3.Button.TonalButton"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
-            android:backgroundTint="@color/surface_variant"
+            android:backgroundTint="@color/bg_chip"
             android:text="▶ Автопрокрутка"
-            android:textColor="@color/genius_yellow"
+            android:textColor="@color/accent_primary"
             android:textSize="12sp"
             app:cornerRadius="18dp" />
 
-        <!-- Speed down -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSpeedDown"
             style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="6dp"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="4dp"
             android:text="-"
             android:textColor="@color/text_primary"
             android:textSize="18sp" />
 
-        <!-- Speed label -->
         <TextView
             android:id="@+id/tvSpeed"
             android:layout_width="wrap_content"
@@ -216,12 +227,11 @@
             android:textSize="12sp"
             android:textStyle="bold" />
 
-        <!-- Speed up -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSpeedUp"
             style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
             android:text="+"
             android:textColor="@color/text_primary"
             android:textSize="18sp" />
@@ -231,37 +241,34 @@
             android:layout_height="1dp"
             android:layout_weight="1" />
 
-        <!-- Font size decrease -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnFontDown"
             style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
             android:text="A-"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
-        <!-- Font size increase -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnFontUp"
             style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
             android:text="A+"
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 
-        <!-- Jump to Top -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnScrollToTop"
             style="@style/Widget.Material3.Button.IconButton"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
             app:icon="@android:drawable/arrow_up_float"
             app:iconTint="@color/text_secondary" />
     </LinearLayout>
 
-    <!-- Lyrics Area (RecyclerView with smooth animated line highlight) -->
+    <!-- Lyrics View Container -->
     <FrameLayout
         android:id="@+id/layoutLyricsContainer"
         android:layout_width="match_parent"
@@ -277,16 +284,16 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingTop="20dp"
-            android:paddingBottom="120dp"
-            android:scrollbars="vertical" />
+            android:paddingTop="24dp"
+            android:paddingBottom="140dp"
+            android:scrollbars="none" />
 
         <ProgressBar
             android:id="@+id/progressBar"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:indeterminateTint="@color/genius_yellow"
+            android:indeterminateTint="@color/accent_primary"
             android:visibility="gone" />
 
         <TextView
@@ -295,10 +302,10 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:gravity="center"
-            android:padding="24dp"
-            android:text="Включите любую песню в плеере, и ее слова с Genius.com появятся здесь."
+            android:padding="28dp"
+            android:text="Включите любую песню в SoundCloud, и текст сразу подтянется сюда."
             android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
+            android:textSize="15sp" />
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
