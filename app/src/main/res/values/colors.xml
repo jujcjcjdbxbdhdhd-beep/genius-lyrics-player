@@ -1,21 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Modern Spotify / Cyberpunk Luxury Dark Theme -->
+    <!-- Modern Cyberpunk & Deep Slate Dark Theme -->
     <color name="bg_main">#0B0E14</color>
     <color name="bg_card">#131922</color>
     <color name="bg_surface">#1C2331</color>
     <color name="bg_chip">#252E3E</color>
     
-    <!-- Neon Accents -->
+    <!-- Neon & Primary Accents -->
     <color name="accent_primary">#00F5D4</color>
     <color name="accent_yellow">#FFE600</color>
     <color name="accent_spotify">#1DB954</color>
     <color name="accent_soundcloud">#FF5500</color>
+    <color name="genius_yellow">#00F5D4</color>
     
     <!-- Crisp Text & Glass Accents -->
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#9DA8BA</color>
     <color name="text_muted">#5B667A</color>
     <color name="border_subtle">#222B3B</color>
+    
+    <!-- Compatibility aliases -->
+    <color name="overlay_background">#F00E121A</color>
     <color name="overlay_window">#F00E121A</color>
+    <color name="surface_variant">#222B3B</color>
+    <color name="divider_color">#222B3B</color>
 </resources>
