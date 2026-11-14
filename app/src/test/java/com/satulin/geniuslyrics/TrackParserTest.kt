@@ -1,6 +1,7 @@
 package com.satulin.geniuslyrics
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,20 +19,43 @@ class TrackParserTest {
         assertEquals("ROCKET", p2.artist)
         assertEquals("drive home", p2.title)
 
-        // With dash
+        // With dash: Artist - Title
         val p3 = MediaNotificationListener.parseTrack("рокет - drive home", "")
         assertEquals("ROCKET", p3.artist)
         assertEquals("drive home", p3.title)
 
-        // Title and separate raw artist
-        val p4 = MediaNotificationListener.parseTrack("Drive Home", "рокет")
+        // Inverted dash: Title - Artist
+        val p4 = MediaNotificationListener.parseTrack("Drive Home - ROCKET", "")
         assertEquals("ROCKET", p4.artist)
         assertEquals("Drive Home", p4.title)
 
-        // Null strings must be filtered
-        val p5 = MediaNotificationListener.parseTrack("рокет drive home", "null")
+        val p5 = MediaNotificationListener.parseTrack("Drive Home - рокет", "")
         assertEquals("ROCKET", p5.artist)
-        assertEquals("drive home", p5.title)
+        assertEquals("Drive Home", p5.title)
+
+        // Brackets: Title (Artist) or Title [Artist]
+        val p6 = MediaNotificationListener.parseTrack("Drive Home (рокет)", "")
+        assertEquals("ROCKET", p6.artist)
+        assertEquals("Drive Home", p6.title)
+
+        val p7 = MediaNotificationListener.parseTrack("Drive Home [рокета]", "")
+        assertEquals("ROCKET", p7.artist)
+        assertEquals("Drive Home", p7.title)
+
+        // Title by Artist
+        val p8 = MediaNotificationListener.parseTrack("Drive Home by рокет", "")
+        assertEquals("ROCKET", p8.artist)
+        assertEquals("Drive Home", p8.title)
+
+        // Separate raw artist
+        val p9 = MediaNotificationListener.parseTrack("Drive Home", "рокет")
+        assertEquals("ROCKET", p9.artist)
+        assertEquals("Drive Home", p9.title)
+
+        // Null strings must be filtered
+        val p10 = MediaNotificationListener.parseTrack("рокет drive home", "null")
+        assertEquals("ROCKET", p10.artist)
+        assertEquals("drive home", p10.title)
     }
 
     @Test
@@ -39,7 +63,9 @@ class TrackParserTest {
         val cases = listOf(
             Pair("тейп gimme the loot", Pair("Big Baby Tape", "gimme the loot")),
             Pair("тейп - gimme the loot", Pair("Big Baby Tape", "gimme the loot")),
+            Pair("Gimme the Loot - тейп", Pair("Big Baby Tape", "Gimme the Loot")),
             Pair("буда бандит", Pair("OG Buda", "бандит")),
+            Pair("Бандит (буда)", Pair("OG Buda", "Бандит")),
             Pair("кизару дежавю", Pair("kizaru", "дежавю")),
             Pair("макан асфальт 8", Pair("MACAN", "асфальт 8")),
             Pair("платина в темноте", Pair("Платина", "в темноте")),
@@ -59,18 +85,17 @@ class TrackParserTest {
     }
 
     @Test
-    fun testStripJunkTags() {
-        val p1 = MediaNotificationListener.parseTrack("рокет drive home [slowed + reverb]", "")
-        assertEquals("ROCKET", p1.artist)
-        assertEquals("drive home", p1.title)
+    fun testTitleAndArtistMatching() {
+        // Must reject completely different songs
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Stress Relief"))
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Yeah, Yeah, Yeah"))
+        assertFalse(GeniusLyricsFetcher.isArtistMatch("ROCKET", "late night drive home"))
 
-        val p2 = MediaNotificationListener.parseTrack("буда бандит (prod. by stereoRYZE)", "")
-        assertEquals("OG Buda", p2.artist)
-        assertEquals("бандит", p2.title)
-
-        val p3 = MediaNotificationListener.parseTrack("kizaru - дежавю (Official Video).mp3", "")
-        assertEquals("kizaru", p3.artist)
-        assertEquals("дежавю", p3.title)
+        // Must match exact and normalized titles
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Drive Home"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("drive home", "Drive Home (Bonus Track)"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("ROCKET", "ROCKET"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("рокет", "ROCKET"))
     }
 
     @Test

@@ -175,16 +175,20 @@ class MediaNotificationListener : NotificationListenerService() {
             return trimmed
         }
 
-        fun canonicalizeArtist(artist: String): String {
-            val clean = sanitizeText(artist)
-            if (clean.isBlank()) return ""
+        fun findKnownArtist(s: String?): String? {
+            val clean = sanitizeText(s)
+            if (clean.isBlank()) return null
             val lower = clean.lowercase()
             for (pair in ARTIST_ALIASES) {
-                if (lower == pair.first) {
+                if (lower == pair.first || lower == pair.second.lowercase()) {
                     return pair.second
                 }
             }
-            return clean
+            return null
+        }
+
+        fun canonicalizeArtist(artist: String): String {
+            return findKnownArtist(artist) ?: sanitizeText(artist)
         }
 
         data class ParsedTrack(val title: String, val artist: String)
@@ -194,40 +198,74 @@ class MediaNotificationListener : NotificationListenerService() {
             var cleanTitle = sanitizeText(rawTitle)
 
             if (cleanTitle.isBlank()) {
-                return ParsedTrack(title = "", artist = "")
+                val mappedOnlyArtist = findKnownArtist(cleanRawArtist) ?: cleanRawArtist
+                return ParsedTrack(title = "", artist = mappedOnlyArtist)
             }
 
-            // Strip junk bracket tags: [slowed], (prod. by ...), [bass boosted], etc.
+            // Strip noise: [slowed], [reverb], (prod. by ...), .mp3
             cleanTitle = cleanTitle
-                .replace(Regex("\\[.*?(slowed|reverb|speed|sped|bass|prod|remix|edit|nightcore|official|hq).*?\\]", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("\\[.*?(slowed|reverb|speed|sped|bass|remix|edit|nightcore|official|hq).*?\\]", RegexOption.IGNORE_CASE), "")
                 .replace(Regex("\\(.*?(slowed|reverb|speed|sped|bass|prod|remix|edit|nightcore|official|hq).*?\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(prod\\..*?\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\[prod\\..*?\\]", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(feat\\..*?\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\[feat\\..*?\\]", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(ft\\..*?\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\[ft\\..*?\\]", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(Official Video\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\[Official Video\\]", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\(Remastered.*?\\)", RegexOption.IGNORE_CASE), "")
                 .replace(Regex("\\.(mp3|wav|flac|m4a)$", RegexOption.IGNORE_CASE), "")
                 .trim()
 
-            // 1. Check for dash separators: " - ", " — ", " – "
+            // 1. Check dash separator: " - ", " — ", " – " (Could be Artist - Title OR Title - Artist!)
             val seps = listOf(" - ", " — ", " – ")
             for (sep in seps) {
                 if (cleanTitle.contains(sep)) {
                     val parts = cleanTitle.split(sep, limit = 2)
                     val p1 = parts[0].trim()
                     val p2 = parts[1].trim()
+
+                    // Case A: p2 is a known artist (e.g. "Drive Home - ROCKET" or "Drive Home - рокет")
+                    val p2Artist = findKnownArtist(p2)
+                    if (p2Artist != null && p1.isNotBlank()) {
+                        return ParsedTrack(title = p1, artist = p2Artist)
+                    }
+
+                    // Case B: p1 is a known artist (e.g. "ROCKET - Drive Home" or "рокет - Drive Home")
+                    val p1Artist = findKnownArtist(p1)
+                    if (p1Artist != null && p2.isNotBlank()) {
+                        return ParsedTrack(title = p2, artist = p1Artist)
+                    }
+
+                    // Case C: Standard dash fallback
                     if (p1.isNotBlank() && p2.isNotBlank()) {
-                        val mappedArtist = canonicalizeArtist(cleanArtistWord(p1))
-                        return ParsedTrack(title = p2, artist = mappedArtist)
+                        val mapped = canonicalizeArtist(cleanArtistWord(p1))
+                        return ParsedTrack(title = p2, artist = mapped)
                     }
                 }
             }
 
-            // 2. Check if cleanTitle starts with any known artist alias (e.g. "рокет drive home" or "тейп gimme the loot")
+            // 2. Check brackets: "Drive Home (рокет)" or "Drive Home [рокет]" or "Drive Home (feat. рокет)"
+            val bracketRegex = Regex("[\\(\\[](?:feat\\.?|ft\\.?|prod\\.?|by)?\\s*([a-zA-Z0-9а-яА-ЯёЁ\\s$]+)[\\)\\]]$", RegexOption.IGNORE_CASE)
+            val bracketMatch = bracketRegex.find(cleanTitle)
+            if (bracketMatch != null) {
+                val inside = bracketMatch.groupValues[1].trim()
+                val artistInBracket = findKnownArtist(inside)
+                if (artistInBracket != null) {
+                    val rest = cleanTitle.substring(0, bracketMatch.range.first).trim()
+                    if (rest.isNotBlank()) {
+                        return ParsedTrack(title = rest, artist = artistInBracket)
+                    }
+                }
+            }
+
+            // 3. Check "by <artist>" or "feat <artist>" at end: "Drive Home by рокет"
+            val byRegex = Regex("\\s+(?:by|feat\\.?|ft\\.?)\\s+([a-zA-Z0-9а-яА-ЯёЁ\\s$]+)$", RegexOption.IGNORE_CASE)
+            val byMatch = byRegex.find(cleanTitle)
+            if (byMatch != null) {
+                val afterBy = byMatch.groupValues[1].trim()
+                val artistBy = findKnownArtist(afterBy)
+                if (artistBy != null) {
+                    val rest = cleanTitle.substring(0, byMatch.range.first).trim()
+                    if (rest.isNotBlank()) {
+                        return ParsedTrack(title = rest, artist = artistBy)
+                    }
+                }
+            }
+
+            // 4. Prefix check: "рокет drive home" or "тейп gimme the loot"
             val lower = cleanTitle.lowercase()
             for (pair in ARTIST_ALIASES) {
                 val alias = pair.first
@@ -243,13 +281,13 @@ class MediaNotificationListener : NotificationListenerService() {
                 }
             }
 
-            // 3. If rawArtist was provided (e.g. in Spotify or Yandex notifications)
+            // 5. If rawArtist was provided (e.g. SoundCloud uploader or Spotify/Yandex artist)
             if (cleanRawArtist.isNotBlank()) {
                 val mappedArtist = canonicalizeArtist(cleanArtistWord(cleanRawArtist))
                 return ParsedTrack(title = cleanTitle, artist = mappedArtist)
             }
 
-            // 4. Default: single track name
+            // 6. Default: title alone
             return ParsedTrack(title = cleanTitle, artist = "")
         }
 
