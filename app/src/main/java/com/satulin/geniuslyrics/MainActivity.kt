@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.DisplayMetrics
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -18,6 +19,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.LinearSmoothScroller
+import androidx.recyclerview.widget.RecyclerView
 import com.satulin.geniuslyrics.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,9 +34,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var layoutManager: LinearLayoutManager
 
     private var isAutoScrolling = true
+    private var isUserManuallyScrolling = false
     private var scrollSpeedFactor = 1.0f
     private var scrollJob: Job? = null
-    private var currentFontSizeSp = 19f
+    private var reSyncJob: Job? = null
+    private var currentFontSizeSp = 20f
 
     private var activeTitle: String = ""
     private var activeArtist: String = ""
@@ -43,6 +48,7 @@ class MainActivity : AppCompatActivity() {
 
     private var isMediaPlaying = false
     private var lastKnownPositionMs = 0L
+    private var totalDurationMs = 0L
     private var lastUpdateTimeSystem = 0L
 
     private val trackReceiver = object : BroadcastReceiver() {
@@ -54,17 +60,19 @@ class MainActivity : AppCompatActivity() {
                     val rawTitle = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_RAW_TITLE))
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
+                    val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, 0L)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
 
-                    updatePlaybackTime(pos, updated, isPlaying)
+                    updatePlaybackTime(pos, dur, updated, isPlaying)
                     onTrackUpdated(title, artist, rawTitle, isPlaying)
                 }
                 MediaNotificationListener.ACTION_PLAYBACK_STATE -> {
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
+                    val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, totalDurationMs)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
 
-                    updatePlaybackTime(pos, updated, isPlaying)
+                    updatePlaybackTime(pos, dur, updated, isPlaying)
                     updatePlayStatusBadge(isPlaying)
                 }
             }
@@ -86,10 +94,47 @@ class MainActivity : AppCompatActivity() {
         binding.rvLyrics.layoutManager = layoutManager
 
         lyricsAdapter = LyricsAdapter { clickedPosition ->
-            selectLine(clickedPosition, smoothScroll = true)
+            isUserManuallyScrolling = false
+            binding.btnSyncCurrentLine.visibility = View.GONE
+            selectLine(clickedPosition, smoothScroll = true, force = true)
         }
         lyricsAdapter.fontSizeSp = currentFontSizeSp
         binding.rvLyrics.adapter = lyricsAdapter
+
+        // Detect user manual dragging: show Spotify "Return to Sync" pill
+        binding.rvLyrics.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                super.onScrollStateChanged(recyclerView, newState)
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    isUserManuallyScrolling = true
+                    if (lyricsLines.isNotEmpty()) {
+                        binding.btnSyncCurrentLine.visibility = View.VISIBLE
+                    }
+                    scheduleAutoReSync()
+                }
+            }
+        })
+
+        binding.btnSyncCurrentLine.setOnClickListener {
+            isUserManuallyScrolling = false
+            binding.btnSyncCurrentLine.visibility = View.GONE
+            reSyncJob?.cancel()
+            val target = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
+            selectLine(target, smoothScroll = true, force = true)
+        }
+    }
+
+    private fun scheduleAutoReSync() {
+        reSyncJob?.cancel()
+        reSyncJob = lifecycleScope.launch {
+            delay(4000)
+            if (isActive) {
+                isUserManuallyScrolling = false
+                binding.btnSyncCurrentLine.visibility = View.GONE
+                val target = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
+                selectLine(target, smoothScroll = true, force = true)
+            }
+        }
     }
 
     override fun onResume() {
@@ -114,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         if (currentTitle.isNotBlank()) {
             updatePlaybackTime(
                 MediaNotificationListener.currentPositionMs,
+                MediaNotificationListener.currentDurationMs,
                 MediaNotificationListener.lastPositionUpdateTime,
                 MediaNotificationListener.isPlaying
             )
@@ -167,20 +213,22 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnFontDown.setOnClickListener {
-            if (currentFontSizeSp > 13f) {
+            if (currentFontSizeSp > 14f) {
                 currentFontSizeSp -= 2f
                 lyricsAdapter.fontSizeSp = currentFontSizeSp
             }
         }
         binding.btnFontUp.setOnClickListener {
-            if (currentFontSizeSp < 32f) {
+            if (currentFontSizeSp < 34f) {
                 currentFontSizeSp += 2f
                 lyricsAdapter.fontSizeSp = currentFontSizeSp
             }
         }
 
         binding.btnScrollToTop.setOnClickListener {
-            selectLine(0, smoothScroll = true)
+            isUserManuallyScrolling = false
+            binding.btnSyncCurrentLine.visibility = View.GONE
+            selectLine(0, smoothScroll = true, force = true)
         }
 
         binding.btnManualSearch.setOnClickListener {
@@ -198,8 +246,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updatePlaybackTime(positionMs: Long, updatedAt: Long, playing: Boolean) {
+    private fun updatePlaybackTime(positionMs: Long, durationMs: Long, updatedAt: Long, playing: Boolean) {
         lastKnownPositionMs = positionMs
+        if (durationMs > 0) {
+            totalDurationMs = durationMs
+        }
         lastUpdateTimeSystem = if (updatedAt > 0) updatedAt else SystemClock.elapsedRealtime()
         isMediaPlaying = playing
     }
@@ -216,13 +267,11 @@ class MainActivity : AppCompatActivity() {
         isAutoScrolling = !isAutoScrolling
         if (isAutoScrolling) {
             binding.btnToggleScroll.text = "⏸ Пауза"
-            binding.btnToggleScroll.setTextColor(Color.parseColor("#00F5D4"))
-            binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#1C2331"))
+            binding.btnToggleScroll.setTextColor(Color.parseColor("#1DB954"))
             startAutoScrollLoop()
         } else {
             binding.btnToggleScroll.text = "▶ Автопрокрутка"
-            binding.btnToggleScroll.setTextColor(Color.parseColor("#CBD5E1"))
-            binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#131922"))
+            binding.btnToggleScroll.setTextColor(Color.parseColor("#B3B3B3"))
             stopAutoScroll()
         }
     }
@@ -234,8 +283,16 @@ class MainActivity : AppCompatActivity() {
                 if (lyricsLines.isNotEmpty()) {
                     val isSynced = currentLyricsResult?.isSynced == true
 
+                    // Update Spotify time counters & progress bar
+                    val currentMs = getCurrentTrackPosition()
+                    binding.tvCurrentTime.text = formatTime(currentMs)
+                    if (totalDurationMs > 0) {
+                        binding.tvTotalTime.text = formatTime(totalDurationMs)
+                        val progress = ((currentMs.toDouble() / totalDurationMs) * 1000).toInt().coerceIn(0, 1000)
+                        binding.pbTrackProgress.progress = progress
+                    }
+
                     if (isSynced && isMediaPlaying) {
-                        val currentMs = getCurrentTrackPosition()
                         var bestIndex = -1
                         for (i in lyricsLines.indices) {
                             val lineTime = lyricsLines[i].timeMs
@@ -250,8 +307,9 @@ class MainActivity : AppCompatActivity() {
                             selectLine(bestIndex, smoothScroll = true)
                         }
 
-                        delay(120)
+                        delay(90)
                     } else {
+                        // Smooth auto-scroll for unsynced tracks
                         val currentIndex = lyricsAdapter.activeLineIndex
                         val nextIndex = if (currentIndex + 1 < lyricsLines.size) currentIndex + 1 else 0
 
@@ -272,21 +330,29 @@ class MainActivity : AppCompatActivity() {
                         selectLine(nextIndex, smoothScroll = true)
                     }
                 } else {
-                    delay(500)
+                    delay(400)
                 }
             }
         }
     }
 
-    private fun selectLine(position: Int, smoothScroll: Boolean) {
+    // Spotify smooth center gliding scroll
+    private fun selectLine(position: Int, smoothScroll: Boolean, force: Boolean = false) {
         if (position < 0 || position >= lyricsLines.size) return
         lyricsAdapter.activeLineIndex = position
 
-        if (smoothScroll) {
-            val offset = (binding.rvLyrics.height * 0.35).toInt()
+        if ((!isUserManuallyScrolling || force) && smoothScroll) {
+            try {
+                val scroller = SpotifySmoothScroller(this, 0.35f).apply {
+                    targetPosition = position
+                }
+                layoutManager.startSmoothScroll(scroller)
+            } catch (e: Exception) {
+                layoutManager.scrollToPositionWithOffset(position, (binding.rvLyrics.height * 0.35).toInt())
+            }
+        } else if (!isUserManuallyScrolling || force) {
+            val offset = (binding.rvLyrics.height * 0.35).toInt().coerceAtLeast(60)
             layoutManager.scrollToPositionWithOffset(position, offset)
-        } else {
-            layoutManager.scrollToPositionWithOffset(position, 100)
         }
     }
 
@@ -302,10 +368,10 @@ class MainActivity : AppCompatActivity() {
     private fun updatePlayStatusBadge(isPlaying: Boolean) {
         if (isPlaying) {
             binding.tvStatusBadge.text = "● ИГРАЕТ"
-            binding.tvStatusBadge.setTextColor(Color.parseColor("#00F5D4"))
+            binding.tvStatusBadge.setTextColor(Color.parseColor("#1DB954"))
         } else {
             binding.tvStatusBadge.text = "● ПАУЗА"
-            binding.tvStatusBadge.setTextColor(Color.parseColor("#5B667A"))
+            binding.tvStatusBadge.setTextColor(Color.parseColor("#72777D"))
         }
     }
 
@@ -326,7 +392,7 @@ class MainActivity : AppCompatActivity() {
         activeRawTitle = cleanRaw
 
         binding.tvSongTitle.text = cleanTitle
-        binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud"
+        binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
 
         loadLyrics(cleanArtist, cleanTitle, cleanRaw)
     }
@@ -342,15 +408,14 @@ class MainActivity : AppCompatActivity() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(binding.etSearchQuery.windowToken, 0)
 
-        // Parse query using smart Russian slang/artist recognizer (e.g. "рокет drive home" -> artist "ROCKET", title "drive home")
         val parsed = MediaNotificationListener.parseTrack(query)
         val targetArtist = parsed.artist
         val targetTitle = if (parsed.title.isNotBlank()) parsed.title else query
 
         binding.tvSongTitle.text = targetTitle
-        binding.tvSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Поиск Genius"
+        binding.tvSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Spotify / Genius"
         binding.tvStatusBadge.text = "● ПОИСК"
-        binding.tvStatusBadge.setTextColor(Color.parseColor("#00F5D4"))
+        binding.tvStatusBadge.setTextColor(Color.parseColor("#1DB954"))
 
         loadLyrics(targetArtist, targetTitle, query)
     }
@@ -358,8 +423,10 @@ class MainActivity : AppCompatActivity() {
     private fun loadLyrics(artist: String, title: String, rawTitle: String) {
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-        binding.tvLyricsPlaceholder.text = "Ищем текст на Genius и базах..."
+        binding.tvLyricsPlaceholder.text = "Ищем текст в Spotify, NetEase и Genius..."
         binding.rvLyrics.visibility = View.GONE
+        binding.btnSyncCurrentLine.visibility = View.GONE
+        isUserManuallyScrolling = false
 
         lifecycleScope.launch {
             val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title, rawTitle)
@@ -372,7 +439,7 @@ class MainActivity : AppCompatActivity() {
 
                 lyricsLines = lyricsResult.lines
                 lyricsAdapter.submitLines(lyricsLines)
-                selectLine(0, smoothScroll = false)
+                selectLine(0, smoothScroll = false, force = true)
 
                 binding.tvSourceBadge.text = lyricsResult.sourceName
                 val displayArtist = when {
@@ -395,7 +462,7 @@ class MainActivity : AppCompatActivity() {
             }.onFailure { _ ->
                 binding.rvLyrics.visibility = View.GONE
                 binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-                binding.tvLyricsPlaceholder.text = "Текст не найден на Genius.\n\nПопробуйте ввести точное название трека вручную в строке поиска выше."
+                binding.tvLyricsPlaceholder.text = "Текст не найден.\n\nПопробуйте ввести точное название трека вручную в строке поиска выше."
             }
         }
     }
@@ -416,8 +483,35 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Плавающее окно активировано!", Toast.LENGTH_SHORT).show()
     }
 
+    private fun formatTime(ms: Long): String {
+        val totalSec = (ms / 1000).coerceAtLeast(0)
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        return String.format("%02d:%02d", min, sec)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopAutoScroll()
+        reSyncJob?.cancel()
+    }
+
+    // Spotify-style smooth decelerating scroller that centers the active line
+    class SpotifySmoothScroller(context: Context, private val targetRatio: Float = 0.35f) :
+        LinearSmoothScroller(context) {
+
+        override fun calculateDtToFit(viewStart: Int, viewEnd: Int, boxStart: Int, boxEnd: Int, snapPreference: Int): Int {
+            val boxHeight = boxEnd - boxStart
+            val targetY = boxStart + (boxHeight * targetRatio).toInt()
+            return targetY - viewStart
+        }
+
+        override fun calculateTimeForDeceleration(dx: Int): Int {
+            return (super.calculateTimeForDeceleration(dx) * 1.5).toInt().coerceIn(300, 550)
+        }
+
+        override fun calculateSpeedPerPixel(displayMetrics: DisplayMetrics): Float {
+            return 160f / displayMetrics.densityDpi
+        }
     }
 }

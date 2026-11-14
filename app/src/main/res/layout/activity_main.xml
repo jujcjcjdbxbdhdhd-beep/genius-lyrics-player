@@ -57,7 +57,7 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Top Premium Card: Now Playing Track Info -->
+    <!-- Top Spotify Card: Now Playing Track Info & Progress -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardNowPlaying"
         android:layout_width="match_parent"
@@ -103,8 +103,8 @@
                     android:background="@drawable/pill_background"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="4dp"
-                    android:text="Genius Live"
-                    android:textColor="@color/accent_primary"
+                    android:text="Spotify Lyrics"
+                    android:textColor="@color/accent_spotify"
                     android:textSize="11sp"
                     android:textStyle="bold" />
 
@@ -120,7 +120,7 @@
                     android:layout_width="38dp"
                     android:layout_height="38dp"
                     app:icon="@android:drawable/ic_menu_crop"
-                    app:iconTint="@color/accent_primary" />
+                    app:iconTint="@color/accent_spotify" />
             </LinearLayout>
 
             <TextView
@@ -145,10 +145,53 @@
                 android:text="SoundCloud • Spotify • VK • Яндекс"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
+
+            <!-- Spotify Progress Bar & Track Timings -->
+            <ProgressBar
+                android:id="@+id/pbTrackProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="4dp"
+                android:layout_marginTop="12dp"
+                android:max="1000"
+                android:progress="0"
+                android:progressTint="@color/accent_spotify"
+                android:progressBackgroundTint="#333333" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvCurrentTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="00:00"
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:id="@+id/tvTotalTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="--:--"
+                    android:textColor="@color/text_muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Sleek Neon Search Bar -->
+    <!-- Sleek Spotify Search Bar -->
     <LinearLayout
         android:id="@+id/layoutSearch"
         android:layout_width="match_parent"
@@ -164,7 +207,7 @@
             android:layout_height="44dp"
             android:layout_weight="1"
             android:background="@drawable/pill_background"
-            android:hint="Поиск трека с SoundCloud или Genius…"
+            android:hint="Поиск трека со Spotify или Genius…"
             android:imeOptions="actionSearch"
             android:inputType="text"
             android:paddingHorizontal="16dp"
@@ -177,7 +220,7 @@
             android:layout_width="wrap_content"
             android:layout_height="44dp"
             android:layout_marginStart="8dp"
-            android:backgroundTint="@color/accent_primary"
+            android:backgroundTint="@color/accent_spotify"
             android:text="Найти"
             android:textColor="#000000"
             android:textStyle="bold"
@@ -203,8 +246,8 @@
             android:layout_width="wrap_content"
             android:layout_height="36dp"
             android:backgroundTint="@color/bg_chip"
-            android:text="▶ Автопрокрутка"
-            android:textColor="@color/accent_primary"
+            android:text="⏸ Пауза"
+            android:textColor="@color/accent_spotify"
             android:textSize="12sp"
             app:cornerRadius="18dp" />
 
@@ -268,7 +311,7 @@
             app:iconTint="@color/text_secondary" />
     </LinearLayout>
 
-    <!-- Lyrics View Container -->
+    <!-- Spotify Lyrics View Container -->
     <FrameLayout
         android:id="@+id/layoutLyricsContainer"
         android:layout_width="match_parent"
@@ -284,8 +327,8 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingTop="24dp"
-            android:paddingBottom="140dp"
+            android:paddingTop="32dp"
+            android:paddingBottom="160dp"
             android:scrollbars="none" />
 
         <ProgressBar
@@ -293,7 +336,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:indeterminateTint="@color/accent_primary"
+            android:indeterminateTint="@color/accent_spotify"
             android:visibility="gone" />
 
         <TextView
@@ -303,9 +346,27 @@
             android:layout_gravity="center"
             android:gravity="center"
             android:padding="28dp"
-            android:text="Включите любую песню в SoundCloud, и текст сразу подтянется сюда."
+            android:text="Включите любую песню в SoundCloud или Spotify, и текст появится здесь."
             android:textColor="@color/text_secondary"
             android:textSize="15sp" />
+
+        <!-- Floating Spotify Return-To-Sync Pill (appears when manually scrolling) -->
+        <TextView
+            android:id="@+id/btnSyncCurrentLine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/pill_sync"
+            android:elevation="8dp"
+            android:paddingHorizontal="20dp"
+            android:paddingVertical="10dp"
+            android:text="● К ТЕКУЩЕЙ СТРОКЕ"
+            android:textColor="#000000"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

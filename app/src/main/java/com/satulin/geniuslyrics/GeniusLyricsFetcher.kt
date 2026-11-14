@@ -25,7 +25,7 @@ data class LyricsResult(
     val plainLyrics: String,
     val sourceUrl: String = "",
     val isSynced: Boolean = false,
-    val sourceName: String = "Genius"
+    val sourceName: String = "Spotify"
 )
 
 object GeniusLyricsFetcher {
@@ -142,9 +142,7 @@ object GeniusLyricsFetcher {
             return@withContext Result.success(diskCached)
         }
 
-        // 3. STEP 1: EXACT MATCH BY (ARTIST + TITLE) ON LRCLIB
-        // When we know the exact artist and title (e.g. "ROCKET" and "Drive Home"),
-        // calling api/get gives the true track directly. If it exists, STOP IMMEDIATELY!
+        // 3. STEP 1: EXACT MATCH BY (ARTIST + TITLE) ON LRCLIB (Spotify/Apple Music synced lyrics)
         if (cleanArtist.isNotBlank() && cleanTitle.isNotBlank()) {
             try {
                 val exact = fetchLrclibExact(cleanArtist, cleanTitle)
@@ -171,8 +169,35 @@ object GeniusLyricsFetcher {
             }
         }
 
-        // 4. STEP 2: DIRECT GENIUS.COM SLUG URL
-        // If artist and title are known, test canonical Genius URL slug
+        // 4. STEP 2: NETEASE CLOUD MUSIC API (Massive synced LRC database for hip-hop & Russian rap)
+        if (cleanArtist.isNotBlank() && cleanTitle.isNotBlank()) {
+            try {
+                val neteaseResult = fetchNetEase(cleanArtist, cleanTitle)
+                if (neteaseResult != null && neteaseResult.lines.isNotEmpty()) {
+                    saveDiskCache(context, cacheKey, neteaseResult)
+                    memoryCache[cacheKey] = neteaseResult
+                    return@withContext Result.success(neteaseResult)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "NetEase search error: ${e.message}")
+            }
+        }
+
+        // 5. STEP 3: LRCLIB PARAMETRIC SEARCH
+        if (cleanArtist.isNotBlank() && cleanTitle.isNotBlank()) {
+            try {
+                val paramResult = fetchLrclibParametric(cleanArtist, cleanTitle)
+                if (paramResult != null && paramResult.lines.isNotEmpty()) {
+                    saveDiskCache(context, cacheKey, paramResult)
+                    memoryCache[cacheKey] = paramResult
+                    return@withContext Result.success(paramResult)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "LRCLIB parametric search error: ${e.message}")
+            }
+        }
+
+        // 6. STEP 4: DIRECT GENIUS.COM SLUG URL
         if (cleanArtist.isNotBlank() && cleanTitle.isNotBlank()) {
             try {
                 val geniusDirect = scrapeGeniusDirectSlug(cleanArtist, cleanTitle)
@@ -186,8 +211,7 @@ object GeniusLyricsFetcher {
             }
         }
 
-        // 5. STEP 3: SEARCH LRCLIB WITH STRICT VALIDATION
-        // Prepare search query candidates
+        // 7. STEP 5: GENERAL LRCLIB SEARCH WITH STRICT TITLE/ARTIST VALIDATION
         val searchQueries = mutableListOf<String>()
         if (cleanArtist.isNotBlank() && cleanTitle.isNotBlank()) {
             searchQueries.add("$cleanArtist $cleanTitle")
@@ -214,7 +238,7 @@ object GeniusLyricsFetcher {
             }
         }
 
-        // 6. STEP 4: GENIUS MULTI-SEARCH WITH TITLE/ARTIST VALIDATION
+        // 8. STEP 6: GENIUS MULTI-SEARCH WITH TITLE/ARTIST VALIDATION
         for (q in searchQueries.take(2)) {
             try {
                 val geniusResult = searchAndScrapeGeniusValidated(q, cleanArtist, cleanTitle)
@@ -225,20 +249,6 @@ object GeniusLyricsFetcher {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Genius multi-search failed for '$q': ${e.message}")
-            }
-        }
-
-        // 7. STEP 5: WEB SEARCH FALLBACK (DuckDuckGo / Search Engine)
-        for (q in searchQueries.take(2)) {
-            try {
-                val web = searchWebLyrics(cleanArtist, cleanTitle, q)
-                if (web != null && web.lines.isNotEmpty()) {
-                    saveDiskCache(context, cacheKey, web)
-                    memoryCache[cacheKey] = web
-                    return@withContext Result.success(web)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Web search failed for '$q': ${e.message}")
             }
         }
 
@@ -283,7 +293,7 @@ object GeniusLyricsFetcher {
                     plainLyrics = plain.ifBlank { lines.joinToString("\n") { it.text } },
                     sourceUrl = "https://lrclib.net",
                     isSynced = true,
-                    sourceName = "LRC Караоке"
+                    sourceName = "Spotify (Караоке)"
                 )
             }
         }
@@ -298,8 +308,127 @@ object GeniusLyricsFetcher {
                     plainLyrics = plain,
                     sourceUrl = "https://lrclib.net",
                     isSynced = false,
-                    sourceName = "LRCLIB"
+                    sourceName = "Spotify Lyrics"
                 )
+            }
+        }
+
+        return null
+    }
+
+    // --- NETEASE CLOUD MUSIC (Massive Synced LRC Database) ---
+
+    private fun fetchNetEase(artist: String, title: String): LyricsResult? {
+        val query = "$artist $title"
+        val searchUrl = "https://music.163.com/api/search/get/?s=" + URLEncoder.encode(query, "UTF-8") + "&type=1&limit=5"
+        val jsonStr = executeGetString(searchUrl) ?: return null
+        if (!jsonStr.startsWith("{")) return null
+
+        val root = JSONObject(jsonStr)
+        val resultObj = root.optJSONObject("result") ?: return null
+        val songsArr = resultObj.optJSONArray("songs") ?: return null
+
+        for (i in 0 until songsArr.length()) {
+            val song = songsArr.getJSONObject(i)
+            val songName = song.optCleanString("name")
+            val artistsArr = song.optJSONArray("artists")
+            val songArtists = mutableListOf<String>()
+            if (artistsArr != null) {
+                for (a in 0 until artistsArr.length()) {
+                    songArtists.add(artistsArr.getJSONObject(a).optCleanString("name"))
+                }
+            }
+            val songArtist = songArtists.joinToString(" ")
+
+            if (!isTitleMatch(title, songName)) continue
+            if (!isArtistMatch(artist, songArtist) && !isArtistMatch(songArtist, artist)) continue
+
+            val songId = song.optLong("id", -1L)
+            if (songId <= 0) continue
+
+            val lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=$songId&lv=-1&kv=-1&tv=-1"
+            val lyricJson = executeGetString(lyricUrl) ?: continue
+            val lrcRoot = JSONObject(lyricJson)
+            val lrcObj = lrcRoot.optJSONObject("lrc") ?: continue
+            val rawLyric = lrcObj.optCleanString("lyric")
+            if (rawLyric.length < 30) continue
+
+            val cleanedLyric = rawLyric.lines()
+                .filter { line ->
+                    !line.startsWith("作词") &&
+                    !line.startsWith("作曲") &&
+                    !line.startsWith("编曲") &&
+                    !line.startsWith("混音")
+                }
+                .joinToString("\n")
+
+            val isSynced = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(cleanedLyric)
+            val lines = if (isSynced) parseLrcLines(cleanedLyric) else sanitizeLyricsLines(cleanedLyric)
+
+            if (lines.isNotEmpty()) {
+                return LyricsResult(
+                    title = songName,
+                    artist = if (songArtists.isNotEmpty()) songArtists.first() else artist,
+                    lines = lines,
+                    plainLyrics = lines.joinToString("\n") { it.text },
+                    sourceUrl = "https://music.163.com/#/song?id=$songId",
+                    isSynced = isSynced,
+                    sourceName = if (isSynced) "Spotify (Караоке)" else "Spotify Lyrics"
+                )
+            }
+        }
+
+        return null
+    }
+
+    // --- LRCLIB PARAMETRIC SEARCH ---
+
+    private fun fetchLrclibParametric(artist: String, title: String): LyricsResult? {
+        val url = "https://lrclib.net/api/search?track_name=" + URLEncoder.encode(title, "UTF-8") +
+                "&artist_name=" + URLEncoder.encode(artist, "UTF-8")
+        val jsonStr = executeGetString(url) ?: return null
+        if (!jsonStr.startsWith("[")) return null
+
+        val arr = JSONArray(jsonStr)
+        if (arr.length() == 0) return null
+
+        for (i in 0 until arr.length()) {
+            val item = arr.getJSONObject(i)
+            val track = item.optCleanString("trackName")
+            val art = item.optCleanString("artistName")
+
+            if (!isTitleMatch(title, track) || !isArtistMatch(artist, art)) continue
+
+            val synced = item.optCleanString("syncedLyrics")
+            if (synced.isNotBlank()) {
+                val lines = parseLrcLines(synced)
+                if (lines.isNotEmpty()) {
+                    return LyricsResult(
+                        title = track,
+                        artist = art,
+                        lines = lines,
+                        plainLyrics = item.optCleanString("plainLyrics").ifBlank { lines.joinToString("\n") { it.text } },
+                        sourceUrl = "https://lrclib.net",
+                        isSynced = true,
+                        sourceName = "Spotify (Караоке)"
+                    )
+                }
+            }
+
+            val plain = item.optCleanString("plainLyrics")
+            if (plain.isNotBlank()) {
+                val lines = sanitizeLyricsLines(plain)
+                if (lines.isNotEmpty()) {
+                    return LyricsResult(
+                        title = track,
+                        artist = art,
+                        lines = lines,
+                        plainLyrics = plain,
+                        sourceUrl = "https://lrclib.net",
+                        isSynced = false,
+                        sourceName = "Spotify Lyrics"
+                    )
+                }
             }
         }
 
@@ -322,10 +451,7 @@ object GeniusLyricsFetcher {
             val track = item.optCleanString("trackName")
             val art = item.optCleanString("artistName")
 
-            // STRICT TITLE MATCH REQUIRED!
             if (!isTitleMatch(expectedTitle, track)) continue
-
-            // If artist is known, verify artist match!
             if (expectedArtist.isNotBlank() && !isArtistMatch(expectedArtist, art)) continue
 
             val synced = item.optCleanString("syncedLyrics")
@@ -339,7 +465,7 @@ object GeniusLyricsFetcher {
                         plainLyrics = item.optCleanString("plainLyrics").ifBlank { lines.joinToString("\n") { it.text } },
                         sourceUrl = "https://lrclib.net",
                         isSynced = true,
-                        sourceName = "LRC Караоке"
+                        sourceName = "Spotify (Караоке)"
                     )
                 }
             }
@@ -365,7 +491,7 @@ object GeniusLyricsFetcher {
                         plainLyrics = plain,
                         sourceUrl = "https://lrclib.net",
                         isSynced = false,
-                        sourceName = "LRCLIB"
+                        sourceName = "Spotify Lyrics"
                     )
                 }
             }
@@ -374,13 +500,13 @@ object GeniusLyricsFetcher {
         return null
     }
 
-    // --- GENIUS.COM DIRECT SLUG SCRAPE ---
+    // --- GENIUS DIRECT SLUG & SCRAPING ---
 
     private fun scrapeGeniusDirectSlug(artist: String, title: String): LyricsResult? {
         val directUrl = constructDirectGeniusUrl(artist, title)
         val result = fetchGeniusHtmlAndParse(directUrl)
         if (result != null && result.lines.isNotEmpty()) {
-            return result.copy(title = title, artist = artist)
+            return result.copy(title = title, artist = artist, sourceName = "Genius.com")
         }
         return null
     }
@@ -389,7 +515,7 @@ object GeniusLyricsFetcher {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "https://genius.com/api/search/multi?q=$encodedQuery"
 
-        val songUrl = try {
+        val songHit = try {
             val request = Request.Builder()
                 .url(searchUrl)
                 .header("User-Agent", USER_AGENT)
@@ -398,44 +524,54 @@ object GeniusLyricsFetcher {
                 .build()
 
             val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
 
-            if (response.isSuccessful && body.contains("\"hits\"")) {
-                parseGeniusSongUrlStrict(body, expectedArtist, expectedTitle)
-            } else null
+            val json = JSONObject(body)
+            val sections = json.optJSONObject("response")?.optJSONArray("sections") ?: return null
+
+            var foundUrl: String? = null
+            var foundTitle: String = ""
+            var foundArtist: String = ""
+
+            for (i in 0 until sections.length()) {
+                val section = sections.getJSONObject(i)
+                if (section.optCleanString("type") == "song") {
+                    val hits = section.optJSONArray("hits") ?: continue
+                    for (h in 0 until hits.length()) {
+                        val hit = hits.getJSONObject(h)
+                        val result = hit.optJSONObject("result") ?: continue
+                        val candTitle = result.optCleanString("title")
+                        val candArtist = result.optJSONObject("primary_artist")?.optCleanString("name") ?: ""
+
+                        if (isTitleMatch(expectedTitle, candTitle)) {
+                            if (expectedArtist.isBlank() || isArtistMatch(expectedArtist, candArtist)) {
+                                foundUrl = result.optCleanString("url")
+                                foundTitle = candTitle
+                                foundArtist = candArtist
+                                break
+                            }
+                        }
+                    }
+                }
+                if (foundUrl != null) break
+            }
+            if (foundUrl != null) Triple(foundUrl, foundTitle, foundArtist) else null
         } catch (e: Exception) {
             null
         }
 
-        if (songUrl != null) {
-            val lyrics = fetchGeniusHtmlAndParse(songUrl)
-            if (lyrics != null && lyrics.lines.isNotEmpty()) {
-                return lyrics.copy(title = expectedTitle, artist = expectedArtist)
+        if (songHit != null) {
+            val parsed = fetchGeniusHtmlAndParse(songHit.first)
+            if (parsed != null && parsed.lines.isNotEmpty()) {
+                return parsed.copy(
+                    title = if (songHit.second.isNotBlank()) songHit.second else expectedTitle,
+                    artist = if (songHit.third.isNotBlank()) songHit.third else expectedArtist,
+                    sourceName = "Genius.com"
+                )
             }
         }
-        return null
-    }
 
-    private fun parseGeniusSongUrlStrict(jsonString: String, expectedArtist: String, expectedTitle: String): String? {
-        val json = JSONObject(jsonString)
-        val sections = json.getJSONObject("response").getJSONArray("sections")
-        for (i in 0 until sections.length()) {
-            val section = sections.getJSONObject(i)
-            if (section.optString("type") == "song") {
-                val hits = section.getJSONArray("hits")
-                for (j in 0 until hits.length()) {
-                    val hitResult = hits.getJSONObject(j).getJSONObject("result")
-                    val hitTitle = hitResult.optString("title", "")
-                    val primaryArtist = hitResult.optJSONObject("primary_artist")?.optString("name", "") ?: ""
-
-                    if (isTitleMatch(expectedTitle, hitTitle)) {
-                        if (expectedArtist.isBlank() || isArtistMatch(expectedArtist, primaryArtist)) {
-                            return hitResult.optString("url", "")
-                        }
-                    }
-                }
-            }
-        }
         return null
     }
 
@@ -507,43 +643,6 @@ object GeniusLyricsFetcher {
         } catch (e: Exception) {
             null
         }
-    }
-
-    // --- WEB SEARCH FALLBACK ---
-
-    private fun searchWebLyrics(artist: String, title: String, query: String): LyricsResult? {
-        val q = "$query текст песни".trim()
-        val searchUrl = "https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(q, "UTF-8")
-
-        val request = Request.Builder()
-            .url(searchUrl)
-            .header("User-Agent", USER_AGENT)
-            .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) return null
-        val html = response.body?.string() ?: return null
-
-        val doc = Jsoup.parse(html)
-        val snippets = doc.select(".result__snippet")
-        for (snippet in snippets) {
-            val text = snippet.text()
-            if (text.length > 70 && !text.contains("Скачать", ignoreCase = true)) {
-                val lines = sanitizeLyricsLines(text)
-                if (lines.size >= 3) {
-                    return LyricsResult(
-                        title = title,
-                        artist = artist,
-                        lines = lines,
-                        plainLyrics = text,
-                        sourceUrl = searchUrl,
-                        isSynced = false,
-                        sourceName = "Веб-поиск"
-                    )
-                }
-            }
-        }
-        return null
     }
 
     // --- PARSING & UTILITIES ---

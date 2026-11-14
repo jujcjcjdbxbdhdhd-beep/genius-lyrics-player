@@ -142,7 +142,7 @@ class FloatingLyricsService : Service() {
         val cleanArtist = MediaNotificationListener.sanitizeText(artist)
 
         tvTitle?.text = if (cleanArtist.isNotBlank()) "$cleanArtist — $cleanTitle" else cleanTitle
-        tvLyrics?.text = "Загрузка текста с Genius..."
+        tvLyrics?.text = "Загрузка текста..."
         scrollView?.scrollTo(0, 0)
 
         scope.launch {
@@ -152,7 +152,7 @@ class FloatingLyricsService : Service() {
                 val display = if (lines.isNotEmpty()) lines.joinToString("\n") else lyricsResult.plainLyrics
                 tvLyrics?.text = if (display.isNotBlank() && !display.equals("null", ignoreCase = true)) display else "Текст песни пуст."
             }.onFailure {
-                tvLyrics?.text = "Текст не найден на Genius."
+                tvLyrics?.text = "Текст не найден."
             }
         }
     }
