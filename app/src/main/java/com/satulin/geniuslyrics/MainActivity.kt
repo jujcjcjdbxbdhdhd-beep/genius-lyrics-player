@@ -49,9 +49,9 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 MediaNotificationListener.ACTION_TRACK_CHANGED -> {
-                    val title = intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE) ?: ""
-                    val artist = intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST) ?: ""
-                    val rawTitle = intent.getStringExtra(MediaNotificationListener.EXTRA_RAW_TITLE) ?: ""
+                    val title = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE))
+                    val artist = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST))
+                    val rawTitle = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_RAW_TITLE))
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
@@ -107,10 +107,11 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(trackReceiver, filter)
         }
 
-        val currentTitle = MediaNotificationListener.currentTitle
-        val currentArtist = MediaNotificationListener.currentArtist
-        val currentRawTitle = MediaNotificationListener.currentRawTitle
-        if (!currentTitle.isNullOrBlank()) {
+        val currentTitle = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentTitle)
+        val currentArtist = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentArtist)
+        val currentRawTitle = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentRawTitle)
+
+        if (currentTitle.isNotBlank()) {
             updatePlaybackTime(
                 MediaNotificationListener.currentPositionMs,
                 MediaNotificationListener.lastPositionUpdateTime,
@@ -118,8 +119,8 @@ class MainActivity : AppCompatActivity() {
             )
             onTrackUpdated(
                 currentTitle,
-                currentArtist ?: "",
-                currentRawTitle ?: currentTitle,
+                currentArtist,
+                if (currentRawTitle.isNotBlank()) currentRawTitle else currentTitle,
                 MediaNotificationListener.isPlaying
             )
         }
@@ -215,10 +216,12 @@ class MainActivity : AppCompatActivity() {
         isAutoScrolling = !isAutoScrolling
         if (isAutoScrolling) {
             binding.btnToggleScroll.text = "⏸ Пауза"
+            binding.btnToggleScroll.setTextColor(Color.parseColor("#00F5D4"))
             binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#1C2331"))
             startAutoScrollLoop()
         } else {
             binding.btnToggleScroll.text = "▶ Автопрокрутка"
+            binding.btnToggleScroll.setTextColor(Color.parseColor("#CBD5E1"))
             binding.btnToggleScroll.setBackgroundColor(Color.parseColor("#131922"))
             stopAutoScroll()
         }
@@ -307,25 +310,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onTrackUpdated(title: String, artist: String, rawTitle: String, isPlaying: Boolean) {
-        if (title.isBlank()) return
+        val cleanTitle = MediaNotificationListener.sanitizeText(title)
+        val cleanArtist = MediaNotificationListener.sanitizeText(artist)
+        val cleanRaw = MediaNotificationListener.sanitizeText(rawTitle)
+
+        if (cleanTitle.isBlank()) return
         updatePlayStatusBadge(isPlaying)
 
-        if (title == activeTitle && artist == activeArtist) {
+        if (cleanTitle == activeTitle && cleanArtist == activeArtist) {
             return
         }
 
-        activeTitle = title
-        activeArtist = artist
-        activeRawTitle = rawTitle
+        activeTitle = cleanTitle
+        activeArtist = cleanArtist
+        activeRawTitle = cleanRaw
 
-        binding.tvSongTitle.text = title
-        binding.tvSongArtist.text = if (artist.isNotBlank()) artist else "SoundCloud Track"
+        binding.tvSongTitle.text = cleanTitle
+        binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud"
 
-        loadLyrics(artist, title, rawTitle)
+        loadLyrics(cleanArtist, cleanTitle, cleanRaw)
     }
 
     private fun performManualSearch() {
-        val query = binding.etSearchQuery.text.toString().trim()
+        val rawInput = binding.etSearchQuery.text.toString().trim()
+        val query = MediaNotificationListener.sanitizeText(rawInput)
         if (query.isBlank()) {
             Toast.makeText(this, "Введите название песни", Toast.LENGTH_SHORT).show()
             return
@@ -334,12 +342,17 @@ class MainActivity : AppCompatActivity() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(binding.etSearchQuery.windowToken, 0)
 
-        binding.tvSongTitle.text = query
-        binding.tvSongArtist.text = "Поиск по запросу"
+        // Parse query using smart Russian slang/artist recognizer (e.g. "рокет drive home" -> artist "ROCKET", title "drive home")
+        val parsed = MediaNotificationListener.parseTrack(query)
+        val targetArtist = parsed.artist
+        val targetTitle = if (parsed.title.isNotBlank()) parsed.title else query
+
+        binding.tvSongTitle.text = targetTitle
+        binding.tvSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Поиск Genius"
         binding.tvStatusBadge.text = "● ПОИСК"
         binding.tvStatusBadge.setTextColor(Color.parseColor("#00F5D4"))
 
-        loadLyrics("", query, query)
+        loadLyrics(targetArtist, targetTitle, query)
     }
 
     private fun loadLyrics(artist: String, title: String, rawTitle: String) {
@@ -362,19 +375,27 @@ class MainActivity : AppCompatActivity() {
                 selectLine(0, smoothScroll = false)
 
                 binding.tvSourceBadge.text = lyricsResult.sourceName
-                val displayArtist = if (lyricsResult.artist.isNotBlank()) lyricsResult.artist else artist
-                val displayTitle = if (lyricsResult.title.isNotBlank()) lyricsResult.title else title
-                
+                val displayArtist = when {
+                    lyricsResult.artist.isNotBlank() && !lyricsResult.artist.equals("null", ignoreCase = true) -> lyricsResult.artist
+                    artist.isNotBlank() && !artist.equals("null", ignoreCase = true) -> artist
+                    else -> "SoundCloud"
+                }
+                val displayTitle = when {
+                    lyricsResult.title.isNotBlank() && !lyricsResult.title.equals("null", ignoreCase = true) -> lyricsResult.title
+                    title.isNotBlank() && !title.equals("null", ignoreCase = true) -> title
+                    else -> "Трек"
+                }
+
                 binding.tvSongTitle.text = displayTitle
-                binding.tvSongArtist.text = if (displayArtist.isNotBlank()) displayArtist else "SoundCloud"
+                binding.tvSongArtist.text = displayArtist
 
                 if (isAutoScrolling) {
                     startAutoScrollLoop()
                 }
-            }.onFailure { err ->
+            }.onFailure { _ ->
                 binding.rvLyrics.visibility = View.GONE
                 binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-                binding.tvLyricsPlaceholder.text = "Текст не найден:\n\n${err.localizedMessage}\n\nПопробуйте ввести точное название трека вручную."
+                binding.tvLyricsPlaceholder.text = "Текст не найден на Genius.\n\nПопробуйте ввести точное название трека вручную в строке поиска выше."
             }
         }
     }

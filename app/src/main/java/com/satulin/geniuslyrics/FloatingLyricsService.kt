@@ -35,8 +35,8 @@ class FloatingLyricsService : Service() {
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == MediaNotificationListener.ACTION_TRACK_CHANGED) {
-                val title = intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE) ?: ""
-                val artist = intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST) ?: ""
+                val title = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE))
+                val artist = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST))
                 updateTrack(title, artist)
             }
         }
@@ -126,10 +126,10 @@ class FloatingLyricsService : Service() {
         }
 
         // Load current song if already playing
-        val currentTitle = MediaNotificationListener.currentTitle
-        val currentArtist = MediaNotificationListener.currentArtist
-        if (!currentTitle.isNullOrBlank()) {
-            updateTrack(currentTitle, currentArtist ?: "")
+        val currentTitle = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentTitle)
+        val currentArtist = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentArtist)
+        if (currentTitle.isNotBlank()) {
+            updateTrack(currentTitle, currentArtist)
         }
     }
 
@@ -138,16 +138,21 @@ class FloatingLyricsService : Service() {
         val tvLyrics = overlayView?.findViewById<TextView>(R.id.tvOverlayLyrics)
         val scrollView = overlayView?.findViewById<NestedScrollView>(R.id.scrollOverlayLyrics)
 
-        tvTitle?.text = if (artist.isNotBlank()) "$artist — $title" else title
+        val cleanTitle = MediaNotificationListener.sanitizeText(title)
+        val cleanArtist = MediaNotificationListener.sanitizeText(artist)
+
+        tvTitle?.text = if (cleanArtist.isNotBlank()) "$cleanArtist — $cleanTitle" else cleanTitle
         tvLyrics?.text = "Загрузка текста с Genius..."
         scrollView?.scrollTo(0, 0)
 
         scope.launch {
-            val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title)
+            val result = GeniusLyricsFetcher.getLyrics(applicationContext, cleanArtist, cleanTitle)
             result.onSuccess { lyricsResult ->
-                tvLyrics?.text = lyricsResult.plainLyrics
-            }.onFailure { err ->
-                tvLyrics?.text = "Текст не найден: ${err.localizedMessage}"
+                val lines = lyricsResult.lines.map { it.text }
+                val display = if (lines.isNotEmpty()) lines.joinToString("\n") else lyricsResult.plainLyrics
+                tvLyrics?.text = if (display.isNotBlank() && !display.equals("null", ignoreCase = true)) display else "Текст песни пуст."
+            }.onFailure {
+                tvLyrics?.text = "Текст не найден на Genius."
             }
         }
     }
@@ -156,8 +161,8 @@ class FloatingLyricsService : Service() {
         scrollJob?.cancel()
         scrollJob = scope.launch {
             while (isActive && isAutoScrolling) {
-                delay(100)
-                scrollView?.smoothScrollBy(0, 3)
+                delay(2800)
+                scrollView?.smoothScrollBy(0, 48)
             }
         }
     }
@@ -173,6 +178,8 @@ class FloatingLyricsService : Service() {
         try {
             unregisterReceiver(trackReceiver)
         } catch (ignored: Exception) {}
-        overlayView?.let { windowManager?.removeView(it) }
+        overlayView?.let {
+            windowManager?.removeView(it)
+        }
     }
 }

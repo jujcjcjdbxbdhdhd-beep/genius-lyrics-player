@@ -51,6 +51,7 @@ class LyricsAdapter(
 
     class LyricViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val tvLine: TextView = itemView.findViewById(R.id.tvLyricLine)
+        private val viewIndicator: View = itemView.findViewById(R.id.viewIndicator)
 
         fun bind(line: LyricLine, isActive: Boolean, fontSize: Float) {
             val trimmed = line.text.trim()
@@ -61,32 +62,37 @@ class LyricsAdapter(
 
             if (isHeader) {
                 // Section tags like [Припев], [Куплет 1]
-                tvLine.setTextColor(Color.parseColor("#708090"))
+                viewIndicator.visibility = View.INVISIBLE
+                tvLine.setTextColor(Color.parseColor("#64748B"))
                 tvLine.setTypeface(null, Typeface.BOLD)
-                tvLine.alpha = 0.8f
+                tvLine.alpha = 0.75f
                 itemView.scaleX = 0.98f
                 itemView.scaleY = 0.98f
+                itemView.translationX = 0f
             } else if (isActive) {
-                // Active sung line: vibrant Neon Mint Cyan, bold, smoothly scaled & highlighted
+                // Active sung line: vibrant Neon Mint Cyan, bold, glowing indicator pill
+                viewIndicator.visibility = View.VISIBLE
+                viewIndicator.alpha = 1.0f
                 tvLine.setTextColor(Color.parseColor("#00F5D4"))
                 tvLine.setTypeface(null, Typeface.BOLD)
                 tvLine.alpha = 1.0f
                 itemView.animate()
-                    .scaleX(1.06f)
-                    .scaleY(1.06f)
-                    .translationX(12f)
-                    .setDuration(240)
+                    .scaleX(1.04f)
+                    .scaleY(1.04f)
+                    .translationX(6f)
+                    .setDuration(200)
                     .start()
             } else {
                 // Inactive line: 100% sharp clear text without blur, readable white
-                tvLine.setTextColor(Color.parseColor("#B3FFFFFF"))
+                viewIndicator.visibility = View.INVISIBLE
+                tvLine.setTextColor(Color.parseColor("#CBD5E1"))
                 tvLine.setTypeface(null, Typeface.NORMAL)
-                tvLine.alpha = 0.72f
+                tvLine.alpha = 0.80f
                 itemView.animate()
                     .scaleX(1.0f)
                     .scaleY(1.0f)
                     .translationX(0f)
-                    .setDuration(200)
+                    .setDuration(180)
                     .start()
             }
         }
