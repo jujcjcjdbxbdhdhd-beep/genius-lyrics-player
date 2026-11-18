@@ -251,16 +251,23 @@ class MediaNotificationListener : NotificationListenerService() {
             var s = sanitizeText(title)
             if (s.isBlank()) return ""
 
-            // Strip noise in square brackets [slowed], [prod. ...], [remastered], etc.
-            s = s.replace(Regex("\\[.*?(slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster).*?\\]", RegexOption.IGNORE_CASE), "")
-            // Strip noise in parentheses (slowed + reverb), (prod. by ...), etc.
-            s = s.replace(Regex("\\(.*?(slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster).*?\\)", RegexOption.IGNORE_CASE), "")
-            // Strip trailing "prod. by ...", "ft. ...", "feat. ..."
-            s = s.replace(Regex("\\b(prod\\.?|by|feat\\.?|ft\\.?)\\s+.*$", RegexOption.IGNORE_CASE), "")
+            // Strip decorative emojis & symbols commonly spammed on SoundCloud
+            s = s.replace(Regex("[\\uD83C-\\uD83E][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF]|\\uFE0F"), " ")
+            // Strip noise in square / CJK brackets [slowed], 【SLOWED】, [prod. ...], [remastered], etc.
+            s = s.replace(Regex("[\\[【『][^\\]】』]*?(?:slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tiktok|new)[^\\]】』]*?[\\]】』]", RegexOption.IGNORE_CASE), "")
+            // Strip noise in parentheses (slowed + reverb), (prod. by ...), (Explicit), etc.
+            s = s.replace(Regex("\\([^)]*?(?:slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tiktok|new)[^)]*?\\)", RegexOption.IGNORE_CASE), "")
+            // Strip trailing "prod. by ...", "produced by ...", "beat by ...", "ft. ...", "feat. ..."
+            // NOTE: intentionally does NOT strip bare "by" so songs like "Stand By Me" or "Drive By" stay intact!
+            s = s.replace(Regex("\\b(?:prod\\.?\\s*by|produced\\s+by|prod\\.|beat\\s+by|feat\\.|ft\\.)\\s+.*$", RegexOption.IGNORE_CASE), "")
+            // Strip *NEW* / ~LEAK~ tags
+            s = s.replace(Regex("[*~]\\s*(?:new|leak|exclusive|snippet|slowed|hq)\\s*[*~]", RegexOption.IGNORE_CASE), "")
             // Strip file extensions .mp3, .wav, .flac
             s = s.replace(Regex("\\.(mp3|wav|flac|m4a)$", RegexOption.IGNORE_CASE), "")
             // Strip quotes
-            s = s.replace(Regex("[\"\'«»“”]"), "")
+            s = s.replace(Regex("[\"'«»“”]"), "")
+            // Collapse spaces
+            s = s.replace(Regex("\\s+"), " ")
 
             return s.trim()
         }
@@ -268,9 +275,9 @@ class MediaNotificationListener : NotificationListenerService() {
         fun findKnownArtist(s: String?): String? {
             val clean = sanitizeText(s)
             if (clean.isBlank()) return null
-            val lower = clean.lowercase()
+            val lower = clean.lowercase().replace('ё', 'е')
             for (pair in ARTIST_ALIASES) {
-                if (lower == pair.first || lower == pair.second.lowercase()) {
+                if (lower == pair.first.replace('ё', 'е') || lower == pair.second.lowercase().replace('ё', 'е')) {
                     return pair.second
                 }
             }
@@ -281,97 +288,122 @@ class MediaNotificationListener : NotificationListenerService() {
             return findKnownArtist(artist) ?: sanitizeText(artist)
         }
 
-        data class ParsedTrack(val title: String, val artist: String)
+        data class ParsedTrack(
+            val title: String,
+            val artist: String,
+            val artistFromTitle: Boolean = false
+        )
 
         fun parseTrack(rawTitle: String, rawArtist: String = ""): ParsedTrack {
             val cleanRawArtist = sanitizeText(rawArtist)
-            var cleanTitle = sanitizeText(rawTitle)
+            // Remove leading/trailing emojis before splitting so "🔥 рокет drive home 💀" matches aliases cleanly
+            val preCleaned = sanitizeText(rawTitle)
+                .replace(Regex("[\\uD83C-\\uD83E][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF]|\\uFE0F"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
 
-            if (cleanTitle.isBlank()) {
+            if (preCleaned.isBlank()) {
                 val mappedOnlyArtist = findKnownArtist(cleanRawArtist) ?: cleanRawArtist
-                return ParsedTrack(title = "", artist = mappedOnlyArtist)
+                return ParsedTrack(title = "", artist = mappedOnlyArtist, artistFromTitle = false)
             }
 
-            // 1. Check dash separator: " - ", " — ", " – " (Could be Artist - Title OR Title - Artist!)
-            val seps = listOf(" - ", " — ", " – ")
+            // 1. Check separators: " - ", " — ", " – ", " ― ", " | ", " // "
+            val seps = listOf(" - ", " — ", " – ", " ― ", " | ", " // ")
             for (sep in seps) {
-                if (cleanTitle.contains(sep)) {
-                    val parts = cleanTitle.split(sep, limit = 2)
-                    val p1 = parts[0].trim()
-                    val p2 = parts[1].trim()
+                if (preCleaned.contains(sep)) {
+                    val parts = preCleaned.split(sep, limit = 2)
+                    val p1 = stripNoise(parts[0])
+                    val p2 = stripNoise(parts[1])
 
                     // Case A: p2 is a known artist (e.g. "Drive Home - ROCKET" or "Drive Home - рокет")
                     val p2Artist = findKnownArtist(p2)
                     if (p2Artist != null && p1.isNotBlank()) {
-                        return ParsedTrack(title = stripNoise(p1), artist = p2Artist)
+                        return ParsedTrack(title = p1, artist = p2Artist, artistFromTitle = true)
                     }
 
                     // Case B: p1 is a known artist (e.g. "ROCKET - Drive Home" or "рокет - Drive Home")
                     val p1Artist = findKnownArtist(p1)
                     if (p1Artist != null && p2.isNotBlank()) {
-                        return ParsedTrack(title = stripNoise(p2), artist = p1Artist)
+                        return ParsedTrack(title = p2, artist = p1Artist, artistFromTitle = true)
                     }
 
                     // Case C: Standard dash: assume p1 is artist, p2 is title
                     if (p1.isNotBlank() && p2.isNotBlank()) {
                         val mapped = canonicalizeArtist(cleanArtistWord(p1))
-                        return ParsedTrack(title = stripNoise(p2), artist = mapped)
+                        return ParsedTrack(title = p2, artist = mapped, artistFromTitle = true)
                     }
+                }
+            }
+
+            // 1b. Tight dash without spaces (e.g. "ROCKET-Drive Home") when one side is a known artist
+            if (preCleaned.contains("-") && !preCleaned.contains(" - ")) {
+                val parts = preCleaned.split("-", limit = 2)
+                val p1 = stripNoise(parts[0])
+                val p2 = stripNoise(parts[1])
+                val p1Artist = findKnownArtist(p1)
+                if (p1Artist != null && p2.isNotBlank()) {
+                    return ParsedTrack(title = p2, artist = p1Artist, artistFromTitle = true)
+                }
+                val p2Artist = findKnownArtist(p2)
+                if (p2Artist != null && p1.isNotBlank()) {
+                    return ParsedTrack(title = p1, artist = p2Artist, artistFromTitle = true)
                 }
             }
 
             // 2. Check brackets at the end: "Drive Home (рокет)" or "Drive Home [рокет]" or "Drive Home (feat. рокет)"
             val bracketRegex = Regex("[\\(\\[](?:feat\\.?|ft\\.?|prod\\.?|by)?\\s*([a-zA-Z0-9а-яА-ЯёЁ\\s$]+)[\\)\\]]$", RegexOption.IGNORE_CASE)
-            val bracketMatch = bracketRegex.find(cleanTitle)
+            val bracketMatch = bracketRegex.find(preCleaned)
             if (bracketMatch != null) {
                 val inside = bracketMatch.groupValues[1].trim()
                 val artistInBracket = findKnownArtist(inside)
                 if (artistInBracket != null) {
-                    val rest = cleanTitle.substring(0, bracketMatch.range.first).trim()
+                    val rest = preCleaned.substring(0, bracketMatch.range.first).trim()
                     if (rest.isNotBlank()) {
-                        return ParsedTrack(title = stripNoise(rest), artist = artistInBracket)
+                        return ParsedTrack(title = stripNoise(rest), artist = artistInBracket, artistFromTitle = true)
                     }
                 }
             }
 
             // 3. Check "by <artist>" or "feat <artist>" at end: "Drive Home by рокет"
             val byRegex = Regex("\\s+(?:by|feat\\.?|ft\\.?)\\s+([a-zA-Z0-9а-яА-ЯёЁ\\s$]+)$", RegexOption.IGNORE_CASE)
-            val byMatch = byRegex.find(cleanTitle)
+            val byMatch = byRegex.find(preCleaned)
             if (byMatch != null) {
                 val afterBy = byMatch.groupValues[1].trim()
                 val artistBy = findKnownArtist(afterBy)
                 if (artistBy != null) {
-                    val rest = cleanTitle.substring(0, byMatch.range.first).trim()
+                    val rest = preCleaned.substring(0, byMatch.range.first).trim()
                     if (rest.isNotBlank()) {
-                        return ParsedTrack(title = stripNoise(rest), artist = artistBy)
+                        return ParsedTrack(title = stripNoise(rest), artist = artistBy, artistFromTitle = true)
                     }
                 }
             }
 
             // 4. Prefix check: "рокет drive home" or "тейп gimme the loot"
-            val lower = cleanTitle.lowercase()
+            val strippedForPrefix = stripNoise(preCleaned)
+            val lower = strippedForPrefix.lowercase().replace('ё', 'е')
             for (pair in ARTIST_ALIASES) {
-                val alias = pair.first
+                val alias = pair.first.replace('ё', 'е')
                 val canonical = pair.second
                 if (lower == alias) {
-                    return ParsedTrack(title = stripNoise(cleanTitle), artist = canonical)
+                    return ParsedTrack(title = strippedForPrefix, artist = canonical, artistFromTitle = true)
                 }
                 if (lower.startsWith("$alias ")) {
-                    val rest = cleanTitle.substring(alias.length).trim()
+                    val rest = strippedForPrefix.substring(alias.length).trim()
                     if (rest.isNotBlank()) {
-                        return ParsedTrack(title = stripNoise(rest), artist = canonical)
+                        return ParsedTrack(title = stripNoise(rest), artist = canonical, artistFromTitle = true)
                     }
                 }
             }
 
             // 5. If rawArtist was provided (e.g. SoundCloud uploader or Spotify/Yandex artist)
             if (cleanRawArtist.isNotBlank()) {
-                val mappedArtist = canonicalizeArtist(cleanArtistWord(cleanRawArtist))
-                return ParsedTrack(title = stripNoise(cleanTitle), artist = mappedArtist)
+                val cleanedArt = cleanArtistWord(cleanRawArtist)
+                val mappedArtist = canonicalizeArtist(cleanedArt)
+                return ParsedTrack(title = strippedForPrefix, artist = mappedArtist, artistFromTitle = false)
             }
 
             // 6. Default: title alone
-            return ParsedTrack(title = stripNoise(cleanTitle), artist = "")
+            return ParsedTrack(title = strippedForPrefix, artist = "", artistFromTitle = false)
         }
 
         private fun cleanArtistWord(raw: String): String {

@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private var scrollSpeedFactor = 1.0f
     private var scrollJob: Job? = null
     private var reSyncJob: Job? = null
+    private var lyricsLoadJob: Job? = null
     private var currentFontSizeSp = 20f
 
     private var activeTitle: String = ""
@@ -421,18 +422,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadLyrics(artist: String, title: String, rawTitle: String) {
+        lyricsLoadJob?.cancel()
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-        binding.tvLyricsPlaceholder.text = "Ищем текст в Spotify, NetEase и Genius..."
+        binding.tvLyricsPlaceholder.text = "Ищем текст в Spotify, Genius, NetEase и QQ Music..."
         binding.rvLyrics.visibility = View.GONE
         binding.btnSyncCurrentLine.visibility = View.GONE
         isUserManuallyScrolling = false
 
-        lifecycleScope.launch {
+        lyricsLoadJob = lifecycleScope.launch {
             val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title, rawTitle)
+            if (!isActive) return@launch
             binding.progressBar.visibility = View.GONE
 
             result.onSuccess { lyricsResult ->
+                if (!isActive) return@onSuccess
                 currentLyricsResult = lyricsResult
                 binding.tvLyricsPlaceholder.visibility = View.GONE
                 binding.rvLyrics.visibility = View.VISIBLE
@@ -460,9 +464,11 @@ class MainActivity : AppCompatActivity() {
                     startAutoScrollLoop()
                 }
             }.onFailure { _ ->
+                if (!isActive) return@onFailure
                 binding.rvLyrics.visibility = View.GONE
                 binding.tvLyricsPlaceholder.visibility = View.VISIBLE
-                binding.tvLyricsPlaceholder.text = "Текст не найден.\n\nПопробуйте ввести точное название трека вручную в строке поиска выше."
+                val searchedLabel = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" — ")
+                binding.tvLyricsPlaceholder.text = "Текст не найден для «$searchedLabel».\n\nПопробуйте уточнить название в строке поиска выше."
             }
         }
     }
@@ -494,6 +500,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         stopAutoScroll()
         reSyncJob?.cancel()
+        lyricsLoadJob?.cancel()
     }
 
     // Spotify-style smooth decelerating scroller that centers the active line

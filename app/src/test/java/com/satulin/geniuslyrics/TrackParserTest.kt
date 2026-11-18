@@ -16,6 +16,12 @@ class TrackParserTest {
         assertEquals("NOSTYLIST", MediaNotificationListener.stripNoise("NOSTYLIST (slowed)"))
         assertEquals("В темноте", MediaNotificationListener.stripNoise("В темноте (snippet)"))
         assertEquals("Million", MediaNotificationListener.stripNoise("Million (prod. Gee Key)"))
+        assertEquals("Drive Home", MediaNotificationListener.stripNoise("Drive Home (Explicit)"))
+        assertEquals("В темноте", MediaNotificationListener.stripNoise("【SLOWED】 В темноте 🔥"))
+
+        // Must NOT strip "by" inside real song titles!
+        assertEquals("Stand By Me", MediaNotificationListener.stripNoise("Stand By Me"))
+        assertEquals("Drive By", MediaNotificationListener.stripNoise("Drive By"))
     }
 
     @Test
@@ -24,6 +30,13 @@ class TrackParserTest {
         val p1 = MediaNotificationListener.parseTrack("рокет drive home", "")
         assertEquals("ROCKET", p1.artist)
         assertEquals("drive home", p1.title)
+        assertTrue(p1.artistFromTitle)
+
+        // With emojis + noise
+        val pEmoji = MediaNotificationListener.parseTrack("🔥 рокет drive home (slowed + reverb) 💀", "trap_archive")
+        assertEquals("ROCKET", pEmoji.artist)
+        assertEquals("drive home", pEmoji.title)
+        assertTrue(pEmoji.artistFromTitle)
 
         // Declension 'рокета'
         val p2 = MediaNotificationListener.parseTrack("рокета drive home", "")
@@ -34,6 +47,11 @@ class TrackParserTest {
         val p3 = MediaNotificationListener.parseTrack("рокет - drive home", "")
         assertEquals("ROCKET", p3.artist)
         assertEquals("drive home", p3.title)
+
+        // Tight dash without spaces
+        val pTight = MediaNotificationListener.parseTrack("ROCKET-Drive Home", "")
+        assertEquals("ROCKET", pTight.artist)
+        assertEquals("Drive Home", pTight.title)
 
         // Inverted dash: Title - Artist
         val p4 = MediaNotificationListener.parseTrack("Drive Home - ROCKET", "")
@@ -58,10 +76,17 @@ class TrackParserTest {
         assertEquals("ROCKET", p8.artist)
         assertEquals("Drive Home", p8.title)
 
-        // Separate raw artist
+        // Separate raw artist (SoundCloud uploader vs artist)
         val p9 = MediaNotificationListener.parseTrack("Drive Home", "рокет")
         assertEquals("ROCKET", p9.artist)
         assertEquals("Drive Home", p9.title)
+        assertFalse(p9.artistFromTitle)
+
+        // Fake SoundCloud uploader
+        val pFakeUploader = MediaNotificationListener.parseTrack("Инкассатор", "sliv_trekov_52")
+        assertEquals("sliv_trekov_52", pFakeUploader.artist)
+        assertEquals("Инкассатор", pFakeUploader.title)
+        assertFalse(pFakeUploader.artistFromTitle)
 
         // Null strings must be filtered
         val p10 = MediaNotificationListener.parseTrack("рокет drive home", "null")
@@ -104,18 +129,43 @@ class TrackParserTest {
     }
 
     @Test
-    fun testTitleAndArtistMatching() {
-        // Must reject completely different songs
+    fun testTitleAndArtistMatchingAndPhonetics() {
+        // Must reject completely different songs & 1-char false contains
         assertFalse(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Stress Relief"))
         assertFalse(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Yeah, Yeah, Yeah"))
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("A", "Another Song"))
         assertFalse(GeniusLyricsFetcher.isArtistMatch("ROCKET", "late night drive home"))
 
-        // Must match exact and normalized titles
+        // Must match exact, normalized, ё/е, $/s, and phonetic equivalents
         assertTrue(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Drive Home"))
         assertTrue(GeniusLyricsFetcher.isTitleMatch("drive home", "Drive Home (Bonus Track)"))
         assertTrue(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Drive Home (prod. by FRESCO)"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Синие слезы", "Синие слёзы"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("5 звезд", "5 звёзд"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Асфальт 8", "ASPHALT 8"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Инфинити", "Infinity"))
+
         assertTrue(GeniusLyricsFetcher.isArtistMatch("ROCKET", "ROCKET"))
         assertTrue(GeniusLyricsFetcher.isArtistMatch("рокет", "ROCKET"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("Ken Carson", "Ken Car$on"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("TOXI$", "Toxis"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("Скалли", "Scally Milano"))
+    }
+
+    @Test
+    fun testTransliteratedGeniusSlug() {
+        assertEquals(
+            "https://genius.com/Rocket-drive-home-lyrics",
+            GeniusLyricsFetcher.constructDirectGeniusUrl("ROCKET", "Drive Home")
+        )
+        assertEquals(
+            "https://genius.com/Platina-v-temnote-lyrics",
+            GeniusLyricsFetcher.constructDirectGeniusUrl("Платина", "В темноте")
+        )
+        assertEquals(
+            "https://genius.com/Og-buda-na-kasse-lyrics",
+            GeniusLyricsFetcher.constructDirectGeniusUrl("OG Buda", "На кассе")
+        )
     }
 
     @Test
