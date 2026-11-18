@@ -121,7 +121,7 @@
                     android:layout_height="36dp"
                     android:layout_marginEnd="6dp"
                     android:backgroundTint="#FFFF64"
-                    android:text="Текст с Genius"
+                    android:text="Текст на Genius"
                     android:textColor="#000000"
                     android:textSize="11sp"
                     android:textStyle="bold"
@@ -415,67 +415,96 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <!-- Browser Header Bar -->
+        <!-- Browser Header Bar with Dedicated Search Bar -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="54dp"
+            android:layout_height="wrap_content"
             android:background="#202020"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="8dp">
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnCloseGeniusWeb"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                app:icon="@android:drawable/ic_menu_close_clear_cancel"
-                app:iconTint="#FFFFFF" />
-
+            <!-- Top Row: Close, Status Title, Reload, External Browser -->
             <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCloseGeniusWeb"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    app:icon="@android:drawable/ic_menu_close_clear_cancel"
+                    app:iconTint="#FFFFFF" />
 
                 <TextView
                     android:id="@+id/tvGeniusWebTitle"
-                    android:layout_width="match_parent"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="Genius.com"
-                    android:textColor="#FFFFFF"
+                    android:text="Genius.com — Поиск"
+                    android:textColor="#FFFF64"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/tvGeniusWebSubtitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:text="Официальный текст песни"
-                    android:textColor="#FFFF64"
-                    android:textSize="11sp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnReloadGeniusWeb"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    app:icon="@android:drawable/ic_menu_rotate"
+                    app:iconTint="#B3B3B3" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnExternalBrowserGenius"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    app:icon="@android:drawable/ic_menu_compass"
+                    app:iconTint="#FFFF64" />
             </LinearLayout>
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnReloadGeniusWeb"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="40dp"
+            <!-- Search Bar Row: Pre-filled with playing track & interactive -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="40dp"
-                app:icon="@android:drawable/ic_menu_rotate"
-                app:iconTint="#B3B3B3" />
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnExternalBrowserGenius"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                app:icon="@android:drawable/ic_menu_compass"
-                app:iconTint="#FFFF64" />
+                <EditText
+                    android:id="@+id/etGeniusWebQuery"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/pill_background"
+                    android:hint="Поиск песни на Genius..."
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:paddingHorizontal="14dp"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="@color/text_muted"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnGeniusWebSearch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="#FFFF64"
+                    android:text="Найти"
+                    android:textColor="#000000"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="19dp" />
+            </LinearLayout>
+
         </LinearLayout>
 
         <ProgressBar

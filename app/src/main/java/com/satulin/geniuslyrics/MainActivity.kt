@@ -414,6 +414,10 @@ class MainActivity : AppCompatActivity() {
         binding.tvSongTitle.text = cleanTitle
         binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
 
+        if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
+            openGeniusWeb()
+        }
+
         loadLyrics(cleanArtist, cleanTitle, cleanRaw)
     }
 
@@ -495,39 +499,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openGeniusWeb() {
-        val targetArtist = activeArtist.ifBlank {
-            MediaNotificationListener.sanitizeText(binding.tvSongArtist.text?.toString())
-        }.replace("SoundCloud • Spotify • VK • Яндекс", "").trim()
+    private fun openGeniusWeb(customQuery: String? = null) {
+        val query = customQuery?.trim()?.ifBlank { null } ?: run {
+            val candidate = when {
+                activeRawTitle.isNotBlank() -> activeRawTitle
+                activeArtist.isNotBlank() && activeTitle.isNotBlank() -> "$activeArtist $activeTitle"
+                activeTitle.isNotBlank() -> activeTitle
+                else -> binding.tvSongTitle.text?.toString() ?: ""
+            }.replace("Включите песню", "").trim()
+            MediaNotificationListener.stripNoise(candidate).ifBlank { candidate }
+        }.ifBlank { "ROCKET drive home" }
 
-        val targetTitle = activeTitle.ifBlank {
-            MediaNotificationListener.sanitizeText(binding.tvSongTitle.text?.toString())
-        }.replace("Включите песню", "").trim()
-
-        val directUrl = if (targetArtist.isNotBlank() && targetTitle.isNotBlank()) {
-            GeniusLyricsFetcher.constructDirectGeniusUrl(targetArtist, targetTitle)
-        } else ""
-
-        val sourceGeniusUrl = currentLyricsResult?.sourceUrl?.takeIf {
-            it.contains("genius.com", ignoreCase = true) && !it.endsWith("lrclib.net")
-        } ?: ""
-
-        val searchQuery = listOf(targetArtist, targetTitle).filter { it.isNotBlank() }.joinToString(" ")
-        val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(searchQuery.ifBlank { "ROCKET drive home" }, "UTF-8")
-
-        val initialUrl = when {
-            sourceGeniusUrl.isNotBlank() -> sourceGeniusUrl
-            directUrl.isNotBlank() -> directUrl
-            else -> searchUrl
-        }
-
-        binding.tvGeniusWebTitle.text = if (targetTitle.isNotBlank()) targetTitle else "Genius.com"
-        binding.tvGeniusWebSubtitle.text = if (targetArtist.isNotBlank()) "$targetArtist • genius.com" else "genius.com"
+        binding.etGeniusWebQuery.setText(query)
+        binding.tvGeniusWebTitle.text = "Genius • $query"
         binding.layoutGeniusWebView.visibility = View.VISIBLE
         binding.pbGeniusWeb.visibility = View.VISIBLE
-        binding.pbGeniusWeb.progress = 10
+        binding.pbGeniusWeb.progress = 20
 
-        binding.webViewGeniusPage.loadUrl(initialUrl)
+        val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(query, "UTF-8")
+        binding.webViewGeniusPage.loadUrl(searchUrl)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -577,6 +567,24 @@ class MainActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     binding.pbGeniusWeb.visibility = View.GONE
+
+                    // Inject current query into any search input on genius.com
+                    val currentQ = binding.etGeniusWebQuery.text?.toString()?.trim() ?: ""
+                    if (currentQ.isNotBlank()) {
+                        val escapedQ = currentQ.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+                        val js = """
+                            (function() {
+                                var q = "$escapedQ";
+                                var inputs = document.querySelectorAll('input[name="q"], input[type="search"]');
+                                for (var i = 0; i < inputs.length; i++) {
+                                    if (!inputs[i].value) {
+                                        inputs[i].value = q;
+                                    }
+                                }
+                            })();
+                        """.trimIndent()
+                        view?.evaluateJavascript(js, null)
+                    }
                 }
 
                 override fun onReceivedHttpError(
@@ -588,14 +596,35 @@ class MainActivity : AppCompatActivity() {
                     val statusCode = errorResponse?.statusCode ?: 0
                     val reqUrl = request?.url?.toString() ?: ""
                     if (statusCode == 404 && request?.isForMainFrame == true && reqUrl.endsWith("-lyrics")) {
-                        val query = listOf(activeArtist, activeTitle).filter { it.isNotBlank() }.joinToString(" ")
-                        if (query.isNotBlank()) {
-                            val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(query, "UTF-8")
+                        val q = binding.etGeniusWebQuery.text?.toString()?.trim() ?: ""
+                        if (q.isNotBlank()) {
+                            val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(q, "UTF-8")
                             view?.loadUrl(searchUrl)
                         }
                     }
                 }
             }
+        }
+
+        binding.btnGeniusWebSearch.setOnClickListener {
+            val q = binding.etGeniusWebQuery.text?.toString()?.trim() ?: ""
+            if (q.isNotBlank()) {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(binding.etGeniusWebQuery.windowToken, 0)
+                openGeniusWeb(q)
+            }
+        }
+
+        binding.etGeniusWebQuery.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                val q = binding.etGeniusWebQuery.text?.toString()?.trim() ?: ""
+                if (q.isNotBlank()) {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                    imm?.hideSoftInputFromWindow(binding.etGeniusWebQuery.windowToken, 0)
+                    openGeniusWeb(q)
+                }
+                true
+            } else false
         }
 
         binding.btnCloseGeniusWeb.setOnClickListener {
