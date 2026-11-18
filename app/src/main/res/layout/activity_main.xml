@@ -113,6 +113,23 @@
                     android:layout_height="1dp"
                     android:layout_weight="1" />
 
+                <!-- Genius Web button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenGeniusWeb"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="6dp"
+                    android:backgroundTint="#FFFF64"
+                    android:text="Текст с Genius"
+                    android:textColor="#000000"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="18dp"
+                    app:icon="@android:drawable/ic_menu_search"
+                    app:iconSize="14dp"
+                    app:iconTint="#000000" />
+
                 <!-- Floating overlay icon -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnToggleFloating"
@@ -350,6 +367,21 @@
             android:textColor="@color/text_secondary"
             android:textSize="15sp" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPlaceholderGeniusWeb"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_gravity="center_horizontal|bottom"
+            android:layout_marginBottom="72dp"
+            android:backgroundTint="#FFFF64"
+            android:text="Открыть на сайте Genius"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            app:cornerRadius="22dp"
+            app:icon="@android:drawable/ic_menu_search"
+            app:iconTint="#000000"
+            android:visibility="gone" />
+
         <!-- Floating Spotify Return-To-Sync Pill (appears when manually scrolling) -->
         <TextView
             android:id="@+id/btnSyncCurrentLine"
@@ -368,5 +400,96 @@
             android:visibility="gone" />
 
     </FrameLayout>
+
+    <!-- In-App Genius Web Browser Sheet -->
+    <LinearLayout
+        android:id="@+id/layoutGeniusWebView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@drawable/card_background"
+        android:clickable="true"
+        android:elevation="24dp"
+        android:focusable="true"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Browser Header Bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:background="#202020"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnCloseGeniusWeb"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                app:icon="@android:drawable/ic_menu_close_clear_cancel"
+                app:iconTint="#FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvGeniusWebTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Genius.com"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvGeniusWebSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Официальный текст песни"
+                    android:textColor="#FFFF64"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnReloadGeniusWeb"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                app:icon="@android:drawable/ic_menu_rotate"
+                app:iconTint="#B3B3B3" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnExternalBrowserGenius"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                app:icon="@android:drawable/ic_menu_compass"
+                app:iconTint="#FFFF64" />
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/pbGeniusWeb"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:indeterminateTint="#FFFF64"
+            android:progressTint="#FFFF64" />
+
+        <WebView
+            android:id="@+id/webViewGeniusPage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

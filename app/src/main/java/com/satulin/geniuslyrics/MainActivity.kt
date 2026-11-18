@@ -1,5 +1,6 @@
 package com.satulin.geniuslyrics
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,7 +15,14 @@ import android.util.DisplayMetrics
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
@@ -26,6 +34,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.URLEncoder
 
 class MainActivity : AppCompatActivity() {
 
@@ -245,6 +254,16 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggleFloating.setOnClickListener {
             toggleFloatingLyrics()
         }
+
+        binding.btnOpenGeniusWeb.setOnClickListener {
+            openGeniusWeb()
+        }
+
+        binding.btnPlaceholderGeniusWeb.setOnClickListener {
+            openGeniusWeb()
+        }
+
+        setupGeniusWebView()
     }
 
     private fun updatePlaybackTime(positionMs: Long, durationMs: Long, updatedAt: Long, playing: Boolean) {
@@ -425,6 +444,7 @@ class MainActivity : AppCompatActivity() {
         lyricsLoadJob?.cancel()
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
+        binding.btnPlaceholderGeniusWeb.visibility = View.GONE
         binding.tvLyricsPlaceholder.text = "Ищем текст в Spotify, Genius, NetEase и QQ Music..."
         binding.rvLyrics.visibility = View.GONE
         binding.btnSyncCurrentLine.visibility = View.GONE
@@ -439,6 +459,7 @@ class MainActivity : AppCompatActivity() {
                 if (!isActive) return@onSuccess
                 currentLyricsResult = lyricsResult
                 binding.tvLyricsPlaceholder.visibility = View.GONE
+                binding.btnPlaceholderGeniusWeb.visibility = View.GONE
                 binding.rvLyrics.visibility = View.VISIBLE
 
                 lyricsLines = lyricsResult.lines
@@ -467,10 +488,151 @@ class MainActivity : AppCompatActivity() {
                 if (!isActive) return@onFailure
                 binding.rvLyrics.visibility = View.GONE
                 binding.tvLyricsPlaceholder.visibility = View.VISIBLE
+                binding.btnPlaceholderGeniusWeb.visibility = View.VISIBLE
                 val searchedLabel = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" — ")
-                binding.tvLyricsPlaceholder.text = "Текст не найден для «$searchedLabel».\n\nПопробуйте уточнить название в строке поиска выше."
+                binding.tvLyricsPlaceholder.text = "Текст не найден для «$searchedLabel».\n\nВы можете открыть страницу трека прямо на Genius.com кнопкой ниже."
             }
         }
+    }
+
+    private fun openGeniusWeb() {
+        val targetArtist = activeArtist.ifBlank {
+            MediaNotificationListener.sanitizeText(binding.tvSongArtist.text?.toString())
+        }.replace("SoundCloud • Spotify • VK • Яндекс", "").trim()
+
+        val targetTitle = activeTitle.ifBlank {
+            MediaNotificationListener.sanitizeText(binding.tvSongTitle.text?.toString())
+        }.replace("Включите песню", "").trim()
+
+        val directUrl = if (targetArtist.isNotBlank() && targetTitle.isNotBlank()) {
+            GeniusLyricsFetcher.constructDirectGeniusUrl(targetArtist, targetTitle)
+        } else ""
+
+        val sourceGeniusUrl = currentLyricsResult?.sourceUrl?.takeIf {
+            it.contains("genius.com", ignoreCase = true) && !it.endsWith("lrclib.net")
+        } ?: ""
+
+        val searchQuery = listOf(targetArtist, targetTitle).filter { it.isNotBlank() }.joinToString(" ")
+        val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(searchQuery.ifBlank { "ROCKET drive home" }, "UTF-8")
+
+        val initialUrl = when {
+            sourceGeniusUrl.isNotBlank() -> sourceGeniusUrl
+            directUrl.isNotBlank() -> directUrl
+            else -> searchUrl
+        }
+
+        binding.tvGeniusWebTitle.text = if (targetTitle.isNotBlank()) targetTitle else "Genius.com"
+        binding.tvGeniusWebSubtitle.text = if (targetArtist.isNotBlank()) "$targetArtist • genius.com" else "genius.com"
+        binding.layoutGeniusWebView.visibility = View.VISIBLE
+        binding.pbGeniusWeb.visibility = View.VISIBLE
+        binding.pbGeniusWeb.progress = 10
+
+        binding.webViewGeniusPage.loadUrl(initialUrl)
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupGeniusWebView() {
+        binding.webViewGeniusPage.apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.loadWithOverviewMode = true
+            settings.useWideViewPort = true
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            settings.userAgentString =
+                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    binding.pbGeniusWeb.progress = newProgress
+                    if (newProgress >= 100) {
+                        binding.pbGeniusWeb.visibility = View.GONE
+                    } else {
+                        binding.pbGeniusWeb.visibility = View.VISIBLE
+                    }
+                }
+
+                override fun onReceivedTitle(view: WebView?, title: String?) {
+                    super.onReceivedTitle(view, title)
+                    if (!title.isNullOrBlank() && !title.contains("404", ignoreCase = true) && !title.contains("genius.com", ignoreCase = true)) {
+                        binding.tvGeniusWebTitle.text = title.replace("| Genius", "").trim()
+                    }
+                }
+            }
+
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val url = request?.url?.toString() ?: return false
+                    if (url.contains("genius.com", ignoreCase = true)) {
+                        return false
+                    }
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    } catch (ignored: Exception) {}
+                    return true
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    binding.pbGeniusWeb.visibility = View.GONE
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    errorResponse: WebResourceResponse?
+                ) {
+                    super.onReceivedHttpError(view, request, errorResponse)
+                    val statusCode = errorResponse?.statusCode ?: 0
+                    val reqUrl = request?.url?.toString() ?: ""
+                    if (statusCode == 404 && request?.isForMainFrame == true && reqUrl.endsWith("-lyrics")) {
+                        val query = listOf(activeArtist, activeTitle).filter { it.isNotBlank() }.joinToString(" ")
+                        if (query.isNotBlank()) {
+                            val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(query, "UTF-8")
+                            view?.loadUrl(searchUrl)
+                        }
+                    }
+                }
+            }
+        }
+
+        binding.btnCloseGeniusWeb.setOnClickListener {
+            binding.webViewGeniusPage.stopLoading()
+            binding.layoutGeniusWebView.visibility = View.GONE
+        }
+
+        binding.btnReloadGeniusWeb.setOnClickListener {
+            binding.webViewGeniusPage.reload()
+        }
+
+        binding.btnExternalBrowserGenius.setOnClickListener {
+            val currentUrl = binding.webViewGeniusPage.url ?: "https://genius.com"
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl))
+                startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Не удалось открыть браузер", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
+                    if (binding.webViewGeniusPage.canGoBack()) {
+                        binding.webViewGeniusPage.goBack()
+                    } else {
+                        binding.webViewGeniusPage.stopLoading()
+                        binding.layoutGeniusWebView.visibility = View.GONE
+                    }
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
     }
 
     private fun toggleFloatingLyrics() {
