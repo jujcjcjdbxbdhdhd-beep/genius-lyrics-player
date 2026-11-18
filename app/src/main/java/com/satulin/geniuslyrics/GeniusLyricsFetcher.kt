@@ -135,15 +135,26 @@ object GeniusLyricsFetcher {
         val cand = normalizeForMatch(cleanCand)
         if (exp.isBlank() || cand.isBlank()) return false
         if (exp == cand) return true
+
+        // Substring match ONLY if the shorter string covers >= 70% of the longer
+        // This prevents "home" matching "homesick", "drive" matching "driven away", etc.
         val minLen = minOf(exp.length, cand.length)
-        if (minLen >= 3 && (cand.contains(exp) || exp.contains(cand))) return true
+        val maxLen = maxOf(exp.length, cand.length)
+        if (minLen >= 3 && (cand.contains(exp) || exp.contains(cand))) {
+            val coverage = minLen.toDouble() / maxLen.toDouble()
+            if (coverage >= 0.70) return true
+        }
 
         val pExp = phoneticKey(cleanExp)
         val pCand = phoneticKey(cleanCand)
         if (pExp.isNotBlank() && pCand.isNotBlank()) {
             if (pExp == pCand) return true
-            val pMin = minOf(pExp.length, pCand.length)
-            if (pMin >= 4 && (pCand.contains(pExp) || pExp.contains(pCand))) return true
+            val pMinLen = minOf(pExp.length, pCand.length)
+            val pMaxLen = maxOf(pExp.length, pCand.length)
+            if (pMinLen >= 4 && (pCand.contains(pExp) || pExp.contains(pCand))) {
+                val pCoverage = pMinLen.toDouble() / pMaxLen.toDouble()
+                if (pCoverage >= 0.70) return true
+            }
         }
         return false
     }
@@ -169,14 +180,24 @@ object GeniusLyricsFetcher {
         return false
     }
 
-    private fun pickBestResult(results: List<LyricsResult?>): LyricsResult? {
+    private fun pickBestResult(results: List<LyricsResult?>, expectedTitle: String = "", expectedArtist: String = ""): LyricsResult? {
         val valid = results.filterNotNull().filter { it.lines.isNotEmpty() }
         if (valid.isEmpty()) return null
-        // 1. Prefer synced lyrics (Spotify/LRC karaoke!)
-        valid.firstOrNull { it.isSynced }?.let { return it }
-        // 2. Otherwise prefer Genius.com (complete Russian rap lyrics), then anything valid
-        valid.firstOrNull { it.sourceName.contains("Genius", ignoreCase = true) }?.let { return it }
-        return valid.first()
+
+        // Extra-strict filter: if we have an expectedTitle, reject results whose title doesn't match at all
+        val strictValid = if (expectedTitle.isNotBlank()) {
+            val matched = valid.filter { isTitleMatch(expectedTitle, it.title) }
+            matched.ifEmpty { valid }
+        } else valid
+
+        // 1. Genius synced (rarely happens but would be perfect)
+        strictValid.firstOrNull { it.isSynced && it.sourceName.contains("Genius", ignoreCase = true) }?.let { return it }
+        // 2. Other synced lyrics (Spotify/LRC karaoke)
+        strictValid.firstOrNull { it.isSynced }?.let { return it }
+        // 3. Genius.com plain (most reliable for Russian/underground rap)
+        strictValid.firstOrNull { it.sourceName.contains("Genius", ignoreCase = true) }?.let { return it }
+        // 4. Anything valid
+        return strictValid.first()
     }
 
     suspend fun getLyrics(
@@ -233,90 +254,47 @@ object GeniusLyricsFetcher {
         }
 
         // =========================================================================
-        // STAGE 1: FAST PARALLEL SEARCH (LRCLIB + NetEase + Genius OkHttp)
-        // =========================================================================
-        val stage1Best = coroutineScope {
-            val dLrclibExact = async {
-                if (primaryArtist.isBlank()) null
-                else fetchLrclibExact(primaryArtist, strippedTitle)
-                    ?: (if (!transTitle.equals(strippedTitle, true)) fetchLrclibExact(primaryArtist, transTitle) else null)
-                    ?: (if (secondaryArtist.isNotBlank()) fetchLrclibExact(secondaryArtist, strippedTitle) else null)
-            }
-            val dLrclibSearch = async {
-                val q = if (primaryArtist.isNotBlank()) "$primaryArtist $strippedTitle" else strippedTitle
-                searchLrclibStrict(q, primaryArtist, strippedTitle, requireArtist = primaryArtist.isNotBlank())
-            }
-            val dNetEase = async {
-                if (primaryArtist.isBlank()) null
-                else fetchNetEase(primaryArtist, strippedTitle, requireArtist = true)
-            }
-            val dGeniusOkHttp = async {
-                if (primaryArtist.isBlank()) null
-                else fetchGeniusOkHttp(primaryArtist, strippedTitle, requireArtist = true)
-            }
-
-            pickBestResult(listOf(dLrclibExact.await(), dLrclibSearch.await(), dNetEase.await(), dGeniusOkHttp.await()))
-        }
-        if (stage1Best != null) return@withContext cacheAndReturn(stage1Best)
-
-        // =========================================================================
-        // STAGE 2: YANDEX MUSIC SMART RESOLVER + QQ MUSIC
-        // Resolves Russian slang ("рокет драйв хоум", "френдли таг кальма", "пепел нахуди заново"),
+        // YANDEX MUSIC SMART RESOLVER (runs first to get canonical artist+title)
+        // Resolves Russian slang ("рокет драйв хоум", "френдли таг кальма"),
         // missing 'ё', typos, AND fake SoundCloud uploader usernames!
         // =========================================================================
         val yandexResolved = resolveViaYandexMusic(primaryArtist, strippedTitle, parsed.artistFromTitle)
+        val resolvedArtist = yandexResolved?.artist?.ifBlank { primaryArtist } ?: primaryArtist
+        val resolvedTitle = yandexResolved?.title?.ifBlank { strippedTitle } ?: strippedTitle
 
-        val stage2Best = coroutineScope {
-            val dQQOriginal = async {
-                if (primaryArtist.isBlank()) null
-                else fetchQQMusic(primaryArtist, strippedTitle, requireArtist = true)
+        // =========================================================================
+        // STAGE 1: GENIUS FIRST (DIRECT SLUG + SEARCH API + WEBVIEW)
+        // Genius is THE most reliable source for Russian rap, underground, SoundCloud leaks.
+        // We try it FIRST so we never return a wrong track from less reliable sources.
+        // =========================================================================
+        // 1a. Genius direct slug (instant, no search needed)
+        if (resolvedArtist.isNotBlank() && resolvedTitle.isNotBlank()) {
+            val directUrl = constructDirectGeniusUrl(resolvedArtist, resolvedTitle)
+            val directResult = fetchGeniusHtmlAndParse(directUrl)
+            if (directResult != null && directResult.lines.isNotEmpty()) {
+                return@withContext cacheAndReturn(directResult.copy(
+                    title = resolvedTitle, artist = resolvedArtist, sourceName = "Genius.com"
+                ))
             }
-
-            val dYandexChain = async {
-                if (yandexResolved == null) return@async null
-                val ymTitle = yandexResolved.title
-                val ymArtists = yandexResolved.allArtists.ifEmpty { listOf(yandexResolved.artist) }.filter { it.isNotBlank() }
-                val ymPrimary = ymArtists.firstOrNull() ?: ""
-
-                coroutineScope {
-                    val yExact = async {
-                        var hit: LyricsResult? = null
-                        for (ya in ymArtists.take(2)) {
-                            hit = fetchLrclibExact(ya, ymTitle)
-                            if (hit != null) break
-                        }
-                        hit
-                    }
-                    val ySearch = async {
-                        searchLrclibStrict("$ymPrimary $ymTitle", ymPrimary, ymTitle, requireArtist = ymPrimary.isNotBlank())
-                    }
-                    val yNetEase = async {
-                        fetchNetEase(ymPrimary, ymTitle, requireArtist = ymPrimary.isNotBlank())
-                    }
-                    val yQQ = async {
-                        fetchQQMusic(ymPrimary, ymTitle, requireArtist = ymPrimary.isNotBlank())
-                    }
-                    val yGenius = async {
-                        if (ymPrimary.isNotBlank()) fetchGeniusOkHttp(ymPrimary, ymTitle, requireArtist = true) else null
-                    }
-                    pickBestResult(listOf(yExact.await(), ySearch.await(), yNetEase.await(), yQQ.await(), yGenius.await()))
-                }
-            }
-
-            pickBestResult(listOf(dYandexChain.await(), dQQOriginal.await()))
         }
-        if (stage2Best != null) return@withContext cacheAndReturn(stage2Best)
 
-        // =========================================================================
-        // STAGE 3: GENIUS.COM REAL CHROMIUM WEBVIEW ENGINE
-        // Loads genius.com using Android's real browser engine (immune to OkHttp 403 TLS blocks).
-        // Finds unreleased SoundCloud tracks, underground Russian rap, leaks, snippets on genius.com!
-        // =========================================================================
+        // 1b. Genius search API (OkHttp — may fail due to Cloudflare, but fast when it works)
+        val geniusOkHttpResult = if (resolvedArtist.isNotBlank()) {
+            fetchGeniusOkHttp(resolvedArtist, resolvedTitle, requireArtist = true)
+                ?: fetchGeniusOkHttp(resolvedArtist, strippedTitle, requireArtist = true)
+        } else {
+            fetchGeniusOkHttp("", strippedTitle, requireArtist = false)
+        }
+        if (geniusOkHttpResult != null && geniusOkHttpResult.lines.isNotEmpty()) {
+            return@withContext cacheAndReturn(geniusOkHttpResult)
+        }
+
+        // 1c. Genius WebView (Chromium engine — immune to Cloudflare 403)
         try {
             val webViewGenius = fetchGeniusViaWebView(
                 context = context,
-                primaryArtist = yandexResolved?.artist?.ifBlank { primaryArtist } ?: primaryArtist,
-                strippedTitle = yandexResolved?.title?.ifBlank { strippedTitle } ?: strippedTitle,
+                primaryArtist = resolvedArtist,
+                strippedTitle = resolvedTitle,
                 originalTitle = strippedTitle
             )
             if (webViewGenius != null && webViewGenius.lines.isNotEmpty()) {
@@ -327,11 +305,46 @@ object GeniusLyricsFetcher {
         }
 
         // =========================================================================
-        // STAGE 4: INVERSION FALLBACK + TITLE-ONLY STRICT RESCUE
+        // STAGE 2: FAST PARALLEL FALLBACK (LRCLIB + NetEase + QQ)
+        // Only reached when Genius failed entirely. Strict title matching prevents wrong tracks.
+        // =========================================================================
+        val stage2Best = coroutineScope {
+            val ymArtists = yandexResolved?.allArtists?.ifEmpty { listOf(resolvedArtist) }?.filter { it.isNotBlank() }
+                ?: listOf(resolvedArtist).filter { it.isNotBlank() }
+            val ymPrimary = ymArtists.firstOrNull() ?: primaryArtist
+
+            val dLrclibExact = async {
+                if (ymPrimary.isBlank()) null
+                else fetchLrclibExact(ymPrimary, resolvedTitle)
+                    ?: (if (!transTitle.equals(resolvedTitle, true)) fetchLrclibExact(ymPrimary, transTitle) else null)
+                    ?: (if (secondaryArtist.isNotBlank()) fetchLrclibExact(secondaryArtist, resolvedTitle) else null)
+                    // Also try original strippedTitle if resolver changed it
+                    ?: (if (!resolvedTitle.equals(strippedTitle, true)) fetchLrclibExact(ymPrimary, strippedTitle) else null)
+            }
+            val dLrclibSearch = async {
+                val q = if (ymPrimary.isNotBlank()) "$ymPrimary $resolvedTitle" else resolvedTitle
+                searchLrclibStrict(q, ymPrimary, resolvedTitle, requireArtist = ymPrimary.isNotBlank())
+            }
+            val dNetEase = async {
+                if (ymPrimary.isBlank()) null
+                else fetchNetEase(ymPrimary, resolvedTitle, requireArtist = true)
+            }
+            val dQQ = async {
+                if (ymPrimary.isBlank()) null
+                else fetchQQMusic(ymPrimary, resolvedTitle, requireArtist = true)
+            }
+
+            pickBestResult(listOf(dLrclibExact.await(), dLrclibSearch.await(), dNetEase.await(), dQQ.await()),
+                expectedTitle = resolvedTitle, expectedArtist = resolvedArtist)
+        }
+        if (stage2Best != null) return@withContext cacheAndReturn(stage2Best)
+
+        // =========================================================================
+        // STAGE 3: INVERSION FALLBACK + TITLE-ONLY STRICT RESCUE
         // Rescues "Title - Artist" swaps AND SoundCloud re-uploads with fake uploader names
         // while still strictly verifying title match so unrelated songs are NEVER returned!
         // =========================================================================
-        val stage4Best = coroutineScope {
+        val stage3Best = coroutineScope {
             val dInverted = async {
                 if (primaryArtist.isNotBlank() && strippedTitle.isNotBlank() && parsed.artistFromTitle) {
                     fetchLrclibExact(strippedTitle, primaryArtist)
@@ -358,9 +371,10 @@ object GeniusLyricsFetcher {
                 } else null
             }
 
-            pickBestResult(listOf(dInverted.await(), dTitleOnlyLrclib.await(), dTitleOnlyNetEase.await(), dTitleOnlyQQ.await()))
+            pickBestResult(listOf(dInverted.await(), dTitleOnlyLrclib.await(), dTitleOnlyNetEase.await(), dTitleOnlyQQ.await()),
+                expectedTitle = strippedTitle)
         }
-        if (stage4Best != null) return@withContext cacheAndReturn(stage4Best)
+        if (stage3Best != null) return@withContext cacheAndReturn(stage3Best)
 
         return@withContext Result.failure(Exception("Текст не найден. Попробуйте ручной поиск."))
     }
@@ -761,34 +775,60 @@ object GeniusLyricsFetcher {
         originalTitle: String
     ): LyricsResult? {
         val searchAttempts = mutableListOf<Pair<String, Boolean>>()
+
+        // Attempt 1: "artist title" (most specific)
         if (primaryArtist.isNotBlank()) {
             searchAttempts.add(Pair("$primaryArtist $strippedTitle", true))
         }
+        // Attempt 2: title only (catches mismatched artist names)
         searchAttempts.add(Pair(strippedTitle, false))
+        // Attempt 3: original title if different
         if (!originalTitle.equals(strippedTitle, ignoreCase = true) && originalTitle.length >= 3) {
             searchAttempts.add(Pair(originalTitle, false))
+        }
+        // Attempt 4: transliterated title (for Cyrillic titles)
+        val transTitle = transliterateRuToLat(strippedTitle).trim()
+        if (transTitle.isNotBlank() && !transTitle.equals(strippedTitle, ignoreCase = true)) {
+            if (primaryArtist.isNotBlank()) {
+                searchAttempts.add(Pair("$primaryArtist $transTitle", true))
+            }
+            searchAttempts.add(Pair(transTitle, false))
         }
 
         for ((query, requireArtist) in searchAttempts) {
             val hits = GeniusWebViewFetcher.searchSongs(context, query)
             if (hits.isEmpty()) continue
 
+            // For Genius, we can be a bit more lenient because Genius search itself is good
+            // at finding the right track. But we still verify title match.
             val matched = hits.firstOrNull { hit ->
                 val titleOk = isTitleMatch(strippedTitle, hit.title) || isTitleMatch(originalTitle, hit.title)
                 val artistOk = !requireArtist || primaryArtist.isBlank() || isArtistMatch(primaryArtist, hit.artist)
                 titleOk && artistOk
-            } ?: continue
+            }
 
-            val rawLyrics = GeniusWebViewFetcher.scrapeLyricsFromUrl(context, matched.url) ?: continue
+            // If strict match failed, try the FIRST Genius result when searching with artist+title
+            // (Genius search is smart enough to return the right song in most cases)
+            val finalHit = matched ?: if (requireArtist && hits.isNotEmpty()) {
+                val firstHit = hits.first()
+                // Accept first result only if title has reasonable overlap
+                if (isTitleMatch(strippedTitle, firstHit.title) || isTitleMatch(originalTitle, firstHit.title)) {
+                    firstHit
+                } else null
+            } else null
+
+            if (finalHit == null) continue
+
+            val rawLyrics = GeniusWebViewFetcher.scrapeLyricsFromUrl(context, finalHit.url) ?: continue
             val cleaned = cleanLyrics(rawLyrics)
             val lines = sanitizeLyricsLines(cleaned)
             if (lines.isNotEmpty()) {
                 return LyricsResult(
-                    title = matched.title.ifBlank { strippedTitle },
-                    artist = matched.artist.ifBlank { primaryArtist },
+                    title = finalHit.title.ifBlank { strippedTitle },
+                    artist = finalHit.artist.ifBlank { primaryArtist },
                     lines = lines,
                     plainLyrics = cleaned,
-                    sourceUrl = matched.url,
+                    sourceUrl = finalHit.url,
                     isSynced = false,
                     sourceName = "Genius.com"
                 )

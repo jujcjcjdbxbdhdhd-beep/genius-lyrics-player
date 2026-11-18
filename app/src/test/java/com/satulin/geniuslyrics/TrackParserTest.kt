@@ -136,6 +136,11 @@ class TrackParserTest {
         assertFalse(GeniusLyricsFetcher.isTitleMatch("A", "Another Song"))
         assertFalse(GeniusLyricsFetcher.isArtistMatch("ROCKET", "late night drive home"))
 
+        // Must reject partial substring matches that are too short relative to candidate
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("Home", "Homesick Lullaby"))
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("Drive", "Driven Away Forever"))
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("Ice", "Ice Cream Sundae Party"))
+
         // Must match exact, normalized, ё/е, $/s, and phonetic equivalents
         assertTrue(GeniusLyricsFetcher.isTitleMatch("Drive Home", "Drive Home"))
         assertTrue(GeniusLyricsFetcher.isTitleMatch("drive home", "Drive Home (Bonus Track)"))
