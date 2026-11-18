@@ -247,12 +247,32 @@ class MediaNotificationListener : NotificationListenerService() {
             return trimmed
         }
 
+        private fun stripEmojis(input: String): String {
+            val sb = StringBuilder(input.length)
+            var i = 0
+            while (i < input.length) {
+                val cp = Character.codePointAt(input, i)
+                val charCount = Character.charCount(cp)
+                val isEmoji = (cp in 0x1F300..0x1FAFF) ||
+                    (cp in 0x2600..0x27BF) ||
+                    cp == 0xFE0F ||
+                    cp == 0x200D
+                if (isEmoji) {
+                    sb.append(' ')
+                } else {
+                    sb.append(input, i, i + charCount)
+                }
+                i += charCount
+            }
+            return sb.toString()
+        }
+
         fun stripNoise(title: String): String {
             var s = sanitizeText(title)
             if (s.isBlank()) return ""
 
             // Strip decorative emojis & symbols commonly spammed on SoundCloud
-            s = s.replace(Regex("[\\uD83C-\\uD83E][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF]|\\uFE0F"), " ")
+            s = stripEmojis(s)
             // Strip noise in square / CJK brackets [slowed], 【SLOWED】, [prod. ...], [remastered], etc.
             s = s.replace(Regex("[\\[【『][^\\]】』]*?(?:slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tiktok|new)[^\\]】』]*?[\\]】』]", RegexOption.IGNORE_CASE), "")
             // Strip noise in parentheses (slowed + reverb), (prod. by ...), (Explicit), etc.
@@ -297,8 +317,7 @@ class MediaNotificationListener : NotificationListenerService() {
         fun parseTrack(rawTitle: String, rawArtist: String = ""): ParsedTrack {
             val cleanRawArtist = sanitizeText(rawArtist)
             // Remove leading/trailing emojis before splitting so "🔥 рокет drive home 💀" matches aliases cleanly
-            val preCleaned = sanitizeText(rawTitle)
-                .replace(Regex("[\\uD83C-\\uD83E][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF]|\\uFE0F"), " ")
+            val preCleaned = stripEmojis(sanitizeText(rawTitle))
                 .replace(Regex("\\s+"), " ")
                 .trim()
 
