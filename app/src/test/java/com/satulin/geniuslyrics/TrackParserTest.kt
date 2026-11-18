@@ -147,7 +147,7 @@ class TrackParserTest {
 
         assertTrue(GeniusLyricsFetcher.isArtistMatch("ROCKET", "ROCKET"))
         assertTrue(GeniusLyricsFetcher.isArtistMatch("рокет", "ROCKET"))
-        assertTrue(GeniusLyricsFetcher.isArtistMatch("Ken Carson", "Ken Car$on"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("Ken Carson", "Ken Car\$on"))
         assertTrue(GeniusLyricsFetcher.isArtistMatch("TOXI$", "Toxis"))
         assertTrue(GeniusLyricsFetcher.isArtistMatch("Скалли", "Scally Milano"))
     }
