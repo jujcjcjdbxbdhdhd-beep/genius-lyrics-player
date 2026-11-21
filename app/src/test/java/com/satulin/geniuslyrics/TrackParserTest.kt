@@ -259,4 +259,42 @@ class TrackParserTest {
         assertTrue("Intro offset respected", timed.first().timeMs >= 2000L)
         assertTrue("Outro offset respected", timed.last().timeMs < durationMs - 5000L)
     }
+
+    @Test
+    fun testComputeSeekTargetAndResolveTimestamp() {
+        // 1. computeSeekTargetMs: normal case, positive offset, lower clamp, upper clamp, unknown duration
+        assertEquals(45_000L, GeniusLyricsFetcher.computeSeekTargetMs(45_000L, 0L, 180_000L))
+        assertEquals(43_000L, GeniusLyricsFetcher.computeSeekTargetMs(45_000L, 2_000L, 180_000L))
+        assertEquals(0L, GeniusLyricsFetcher.computeSeekTargetMs(1_500L, 5_000L, 180_000L))
+        assertEquals(179_500L, GeniusLyricsFetcher.computeSeekTargetMs(179_000L, -5_000L, 180_000L))
+        assertEquals(61_000L, GeniusLyricsFetcher.computeSeekTargetMs(62_000L, 1_000L, 0L))
+
+        // 2. resolveLineTimestampMs: synced lines work even when durationMs == 0L
+        val synced = listOf(
+            LyricLine(timeMs = 12_000L, text = "Первая строка"),
+            LyricLine(timeMs = 24_500L, text = "Вторая строка")
+        )
+        assertEquals(12_000L, GeniusLyricsFetcher.resolveLineTimestampMs(synced, 0, 0L))
+        assertEquals(24_500L, GeniusLyricsFetcher.resolveLineTimestampMs(synced, 1, 0L))
+
+        // 3. Unsynced lines with duration > 10s return monotonic weighted timestamps
+        val unsynced = listOf(
+            LyricLine(text = "Короткая"),
+            LyricLine(text = "Более длинная строка с несколькими словами"),
+            LyricLine(text = "Финальная строка куплета")
+        )
+        val t0 = GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 0, 180_000L)
+        val t1 = GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 1, 180_000L)
+        val t2 = GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 2, 180_000L)
+        assertTrue(t0 in 0L until t1)
+        assertTrue(t2 > t1)
+
+        // 4. Short duration (<= 10s) linear interpolation & out-of-bounds/zero-duration guards
+        val shortT1 = GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 1, 8_000L)
+        assertEquals(4_000L, shortT1)
+        val shortT2 = GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 2, 8_000L)
+        assertEquals(7_500L, shortT2)
+        assertEquals(-1L, GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 5, 180_000L))
+        assertEquals(-1L, GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 0, 0L))
+    }
 }

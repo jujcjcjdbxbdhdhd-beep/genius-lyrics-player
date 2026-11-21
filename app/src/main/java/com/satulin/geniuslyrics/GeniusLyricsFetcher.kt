@@ -338,6 +338,39 @@ object GeniusLyricsFetcher {
         }
     }
 
+    /**
+     * Computes target player seek position in ms, accounting for manual sync offset
+     * and clamping safely inside [0, durationMs - 500].
+     */
+    fun computeSeekTargetMs(lineTimeMs: Long, manualSyncOffsetMs: Long, durationMs: Long): Long {
+        val raw = (lineTimeMs - manualSyncOffsetMs).coerceAtLeast(0L)
+        return if (durationMs > 0L) {
+            raw.coerceAtMost((durationMs - 500L).coerceAtLeast(0L))
+        } else {
+            raw
+        }
+    }
+
+    /**
+     * Resolves a lyric line's timestamp from explicit LRC tags, weighted estimation,
+     * or linear interpolation when track duration is short. Returns -1L if unavailable.
+     */
+    fun resolveLineTimestampMs(lines: List<LyricLine>, index: Int, durationMs: Long): Long {
+        if (index !in lines.indices) return -1L
+        val direct = lines[index].timeMs
+        if (direct >= 0L) return direct
+        if (durationMs > 10_000L) {
+            return estimateLineTimestamps(lines, durationMs).getOrNull(index)?.timeMs ?: -1L
+        }
+        if (durationMs > 0L) {
+            val denom = (lines.size - 1).coerceAtLeast(1).toDouble()
+            return (index.toDouble() / denom * durationMs)
+                .toLong()
+                .coerceIn(0L, (durationMs - 500L).coerceAtLeast(0L))
+        }
+        return -1L
+    }
+
     private fun pickBestResult(
         results: List<LyricsResult?>,
         expectedTitle: String = "",

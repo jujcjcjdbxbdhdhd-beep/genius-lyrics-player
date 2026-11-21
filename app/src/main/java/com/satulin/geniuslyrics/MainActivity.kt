@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.DisplayMetrics
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -43,6 +44,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONTokener
 import java.net.URLEncoder
+import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
 
@@ -79,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private var manualSyncOffsetMs = 0L
     private var virtualPositionMs = 0L
     private var isManualSearchMode = false
+    private var seekIgnoreUntilSystemMs = 0L
 
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -101,10 +104,24 @@ class MainActivity : AppCompatActivity() {
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, totalDurationMs)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    val fromSeek = intent.getBooleanExtra(MediaNotificationListener.EXTRA_FROM_SEEK, false)
 
-                    updatePlaybackTime(pos, dur, updated, isPlaying)
-                    updatePlayStatusBadge(isPlaying)
-                    updateProgressUI()
+                    val now = SystemClock.elapsedRealtime()
+                    if (fromSeek) {
+                        seekIgnoreUntilSystemMs = now + 650L
+                        updatePlaybackTime(pos, dur, updated, isPlaying)
+                        updatePlayStatusBadge(isPlaying)
+                        updateProgressUI()
+                        syncActiveLineToPosition(smoothScroll = true)
+                    } else if (now < seekIgnoreUntilSystemMs && abs(pos - lastKnownPositionMs) > 2500L) {
+                        isMediaPlaying = isPlaying
+                        if (dur > 0L) totalDurationMs = dur
+                        updatePlayStatusBadge(isPlaying)
+                    } else {
+                        updatePlaybackTime(pos, dur, updated, isPlaying)
+                        updatePlayStatusBadge(isPlaying)
+                        updateProgressUI()
+                    }
                 }
                 FloatingLyricsService.ACTION_ISLAND_STATE_CHANGED -> {
                     updateIslandButtonState()
@@ -143,21 +160,55 @@ class MainActivity : AppCompatActivity() {
         binding.rvLyrics.layoutManager = layoutManager
         (binding.rvLyrics.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
 
-        lyricsAdapter = LyricsAdapter { clickedPosition ->
-            isUserManuallyScrolling = false
-            binding.btnSyncCurrentLine.visibility = View.GONE
-            reSyncJob?.cancel()
+        lyricsAdapter = LyricsAdapter(
+            onLineClicked = { clickedPosition ->
+                isUserManuallyScrolling = false
+                binding.btnSyncCurrentLine.visibility = View.GONE
+                reSyncJob?.cancel()
 
-            val tappedTime = displayedLines.getOrNull(clickedPosition)?.timeMs ?: -1L
-            if (tappedTime >= 0L) {
-                if (!isManualSearchMode && totalDurationMs > 0L) {
-                    manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
+                val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
+                if (totalDurationMs <= 0L && effectiveDur > 0L) {
+                    totalDurationMs = effectiveDur
+                }
+                if (!isManualSearchMode && effectiveDur > 10_000L && currentLyricsResult?.isSynced != true && displayedLines.firstOrNull()?.timeMs == -1L) {
+                    displayedLines = GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, effectiveDur)
+                }
+
+                val tappedTime = GeniusLyricsFetcher.resolveLineTimestampMs(displayedLines, clickedPosition, effectiveDur)
+                if (!isManualSearchMode && tappedTime >= 0L) {
+                    val seekPos = GeniusLyricsFetcher.computeSeekTargetMs(tappedTime, manualSyncOffsetMs, effectiveDur)
+                    val sought = MediaNotificationListener.seekTo(seekPos)
+                    if (sought) {
+                        val now = SystemClock.elapsedRealtime()
+                        seekIgnoreUntilSystemMs = now + 650L
+                        lastKnownPositionMs = seekPos
+                        lastUpdateTimeSystem = now
+                        updateProgressUI()
+                        binding.rvLyrics.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        selectLine(clickedPosition, smoothScroll = true, force = true)
+                    } else {
+                        virtualPositionMs = tappedTime
+                        selectLine(clickedPosition, smoothScroll = true, force = true)
+                        Toast.makeText(this, "Не удалось перемотать — проверьте доступ к уведомлениям", Toast.LENGTH_SHORT).show()
+                    }
                 } else {
-                    virtualPositionMs = tappedTime
+                    if (tappedTime >= 0L) {
+                        virtualPositionMs = tappedTime
+                    }
+                    selectLine(clickedPosition, smoothScroll = true, force = true)
+                }
+            },
+            onLineLongClicked = { clickedPosition ->
+                val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
+                val tappedTime = GeniusLyricsFetcher.resolveLineTimestampMs(displayedLines, clickedPosition, effectiveDur)
+                if (!isManualSearchMode && tappedTime >= 0L) {
+                    manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
+                    binding.rvLyrics.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    selectLine(clickedPosition, smoothScroll = true, force = true)
+                    Toast.makeText(this, "Синхронизация привязана к этой строке", Toast.LENGTH_SHORT).show()
                 }
             }
-            selectLine(clickedPosition, smoothScroll = true, force = true)
-        }
+        )
         lyricsAdapter.fontSizeSp = currentFontSizeSp
         binding.rvLyrics.adapter = lyricsAdapter
 
@@ -446,16 +497,7 @@ class MainActivity : AppCompatActivity() {
                             effectiveMs = virtualPositionMs
                         }
 
-                        var bestIndex = -1
-                        for (i in timelineLines.indices) {
-                            val lineTime = timelineLines[i].timeMs
-                            if (lineTime in 0..effectiveMs) {
-                                bestIndex = i
-                            } else if (lineTime > effectiveMs) {
-                                break
-                            }
-                        }
-
+                        val bestIndex = findBestLineIndex(timelineLines, effectiveMs)
                         if (bestIndex != -1 && bestIndex != lyricsAdapter.activeLineIndex) {
                             selectLine(bestIndex, smoothScroll = true)
                         }
@@ -463,6 +505,28 @@ class MainActivity : AppCompatActivity() {
                 }
                 delay(100)
             }
+        }
+    }
+
+    private fun findBestLineIndex(timeline: List<LyricLine>, effectiveMs: Long): Int {
+        var bestIndex = -1
+        for (i in timeline.indices) {
+            val lineTime = timeline[i].timeMs
+            if (lineTime in 0..effectiveMs) {
+                bestIndex = i
+            } else if (lineTime > effectiveMs) {
+                break
+            }
+        }
+        return bestIndex
+    }
+
+    private fun syncActiveLineToPosition(smoothScroll: Boolean) {
+        if (isManualSearchMode || displayedLines.isEmpty()) return
+        val effectiveMs = (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
+        val bestIndex = findBestLineIndex(displayedLines, effectiveMs)
+        if (bestIndex != -1 && bestIndex != lyricsAdapter.activeLineIndex) {
+            selectLine(bestIndex, smoothScroll = smoothScroll, force = false)
         }
     }
 
@@ -526,6 +590,7 @@ class MainActivity : AppCompatActivity() {
         isManualSearchMode = false
         manualSyncOffsetMs = 0L
         virtualPositionMs = 0L
+        seekIgnoreUntilSystemMs = 0L
 
         activeTitle = cleanTitle
         activeArtist = cleanArtist
@@ -561,6 +626,7 @@ class MainActivity : AppCompatActivity() {
         isManualSearchMode = true
         manualSyncOffsetMs = 0L
         virtualPositionMs = 0L
+        seekIgnoreUntilSystemMs = 0L
         totalDurationMs = 0L
         lastKnownPositionMs = 0L
 

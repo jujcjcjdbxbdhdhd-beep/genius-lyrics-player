@@ -16,6 +16,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlin.math.abs
 
 class MediaNotificationListener : NotificationListenerService() {
 
@@ -33,6 +34,7 @@ class MediaNotificationListener : NotificationListenerService() {
         const val EXTRA_POSITION_MS = "extra_position_ms"
         const val EXTRA_DURATION_MS = "extra_duration_ms"
         const val EXTRA_UPDATED_AT = "extra_updated_at"
+        const val EXTRA_FROM_SEEK = "extra_from_seek"
 
         var currentTitle: String? = null
         var currentArtist: String? = null
@@ -50,6 +52,8 @@ class MediaNotificationListener : NotificationListenerService() {
         fun refreshActiveTrack() {
             activeInstance?.scanActiveMedia()
         }
+
+        fun seekTo(positionMs: Long): Boolean = activeInstance?.performSeekTo(positionMs) ?: false
 
         // Complete Russian & International hip-hop, rap, underground & SoundCloud artist alias dictionary
         val ARTIST_ALIASES: List<Pair<String, String>> = listOf(
@@ -568,6 +572,8 @@ class MediaNotificationListener : NotificationListenerService() {
     private var activeMediaController: MediaController? = null
     private var activeSessionToken: MediaSession.Token? = null
     private var mediaSessionManager: MediaSessionManager? = null
+    private var seekGuardUntilMs: Long = 0L
+    private var pendingSeekTargetMs: Long = -1L
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
@@ -757,6 +763,8 @@ class MediaNotificationListener : NotificationListenerService() {
             currentPositionMs = 0L
             currentDurationMs = 0L
             lastPositionUpdateTime = SystemClock.elapsedRealtime()
+            pendingSeekTargetMs = -1L
+            seekGuardUntilMs = 0L
         }
 
         currentTitle = parsed.title
@@ -798,6 +806,8 @@ class MediaNotificationListener : NotificationListenerService() {
         if (title.isNotBlank()) {
             val parsed = parseTrack(title, artist)
             if (parsed.title != currentTitle || parsed.artist != currentArtist) {
+                pendingSeekTargetMs = -1L
+                seekGuardUntilMs = 0L
                 if (resetPositionOnTrackChange) {
                     currentPositionMs = 0L
                     lastPositionUpdateTime = SystemClock.elapsedRealtime()
@@ -830,10 +840,62 @@ class MediaNotificationListener : NotificationListenerService() {
         }
     }
 
+    private fun performSeekTo(positionMs: Long): Boolean {
+        if (activeMediaController == null) {
+            scanActiveMedia()
+        }
+        val controller = activeMediaController ?: return false
+        if (currentDurationMs <= 0L) {
+            val metaDur = try {
+                controller.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+            } catch (_: Exception) {
+                0L
+            }
+            if (metaDur > 0L) {
+                currentDurationMs = metaDur
+            }
+        }
+        val clamped = GeniusLyricsFetcher.computeSeekTargetMs(positionMs, 0L, currentDurationMs)
+        return try {
+            controller.transportControls.seekTo(clamped)
+            val now = SystemClock.elapsedRealtime()
+            currentPositionMs = clamped
+            lastPositionUpdateTime = now
+            pendingSeekTargetMs = clamped
+            seekGuardUntilMs = now + 650L
+
+            val intent = Intent(ACTION_PLAYBACK_STATE).apply {
+                putExtra(EXTRA_IS_PLAYING, isPlaying)
+                putExtra(EXTRA_POSITION_MS, clamped)
+                putExtra(EXTRA_DURATION_MS, currentDurationMs)
+                putExtra(EXTRA_UPDATED_AT, now)
+                putExtra(EXTRA_FROM_SEEK, true)
+                setPackage(applicationContext.packageName)
+            }
+            sendBroadcast(intent)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Seek failed: ${e.message}")
+            false
+        }
+    }
+
     private fun updatePlaybackState(state: PlaybackState) {
         val playing = state.state == PlaybackState.STATE_PLAYING
         val position = state.position
         val updatedAt = state.lastPositionUpdateTime
+
+        val now = SystemClock.elapsedRealtime()
+        if (now < seekGuardUntilMs && pendingSeekTargetMs >= 0L) {
+            if (abs(position - pendingSeekTargetMs) > 2500L) {
+                // Ignore stale pre-seek position while player buffers seek, only track play/pause change
+                isPlaying = playing
+                return
+            } else {
+                pendingSeekTargetMs = -1L
+                seekGuardUntilMs = 0L
+            }
+        }
 
         isPlaying = playing
         currentPositionMs = position
@@ -844,6 +906,7 @@ class MediaNotificationListener : NotificationListenerService() {
             putExtra(EXTRA_POSITION_MS, position)
             putExtra(EXTRA_DURATION_MS, currentDurationMs)
             putExtra(EXTRA_UPDATED_AT, updatedAt)
+            putExtra(EXTRA_FROM_SEEK, false)
             setPackage(applicationContext.packageName)
         }
         sendBroadcast(intent)

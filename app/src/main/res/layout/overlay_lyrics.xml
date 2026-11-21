@@ -290,6 +290,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:maxLines="2"
@@ -312,15 +314,28 @@
             android:layout_weight="1"
             android:fillViewport="true">
 
-            <TextView
-                android:id="@+id/tvOverlayLyrics"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-medium"
-                android:lineSpacingExtra="5dp"
-                android:text="Ожидание трека..."
-                android:textColor="#B3B8BE"
-                android:textSize="13.5sp" />
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvOverlayEmptyStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:paddingVertical="4dp"
+                    android:text="Ожидание трека..."
+                    android:textColor="#B3B8BE"
+                    android:textSize="13.5sp" />
+
+                <LinearLayout
+                    android:id="@+id/containerOverlayLyrics"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="16dp" />
+            </LinearLayout>
         </androidx.core.widget.NestedScrollView>
 
         <!-- Bottom Sync & Progress Controls -->

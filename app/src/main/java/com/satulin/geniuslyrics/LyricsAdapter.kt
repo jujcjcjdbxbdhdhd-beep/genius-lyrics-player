@@ -18,7 +18,8 @@ private val COLOR_PAST = Color.parseColor("#5E6368")
 
 class LyricsAdapter(
     private var lines: List<LyricLine> = emptyList(),
-    private val onLineClicked: (Int) -> Unit
+    private val onLineClicked: (Int) -> Unit,
+    private val onLineLongClicked: ((Int) -> Unit)? = null
 ) : RecyclerView.Adapter<LyricsAdapter.LyricViewHolder>() {
 
     var activeLineIndex: Int = -1
@@ -65,6 +66,15 @@ class LyricsAdapter(
             val idx = holder.adapterPosition
             if (idx != RecyclerView.NO_POSITION) {
                 onLineClicked(idx)
+            }
+        }
+        holder.itemView.setOnLongClickListener {
+            val idx = holder.adapterPosition
+            if (idx != RecyclerView.NO_POSITION && onLineLongClicked != null) {
+                onLineLongClicked.invoke(idx)
+                true
+            } else {
+                false
             }
         }
     }

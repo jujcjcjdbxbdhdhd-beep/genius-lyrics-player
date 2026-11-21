@@ -19,18 +19,17 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import android.provider.Settings
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
+import android.util.TypedValue
 import android.view.ContextThemeWrapper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -101,7 +100,7 @@ class FloatingLyricsService : Service() {
     private var syncedLines: List<LyricLine> = emptyList()
     private var isSyncedSource: Boolean = false
     private var activeIndex: Int = -1
-    private var lineCharStarts: IntArray = IntArray(0)
+    private val overlayLineViews = mutableListOf<TextView>()
 
     private var isMediaPlaying: Boolean = false
     private var lastKnownPositionMs: Long = 0L
@@ -109,6 +108,7 @@ class FloatingLyricsService : Service() {
     private var lastUpdateTimeSystem: Long = 0L
     private var manualSyncOffsetMs: Long = 0L
     private var virtualPositionMs: Long = 0L
+    private var seekIgnoreUntilSystemMs: Long = 0L
 
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -131,12 +131,28 @@ class FloatingLyricsService : Service() {
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, totalDurationMs)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    val fromSeek = intent.getBooleanExtra(MediaNotificationListener.EXTRA_FROM_SEEK, false)
 
                     val playChanged = (isPlaying != isMediaPlaying)
-                    updatePlaybackTime(pos, dur, updated, isPlaying)
-                    updateProgressViews()
-                    if (playChanged) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (fromSeek) {
+                        seekIgnoreUntilSystemMs = now + 650L
+                        updatePlaybackTime(pos, dur, updated, isPlaying)
+                        updateProgressViews()
+                        recalculateActiveLineNow(advanceVirtual = false)
                         updateNotificationContent()
+                    } else if (now < seekIgnoreUntilSystemMs && abs(pos - lastKnownPositionMs) > 2500L) {
+                        isMediaPlaying = isPlaying
+                        if (dur > 0L) totalDurationMs = dur
+                        if (playChanged) {
+                            updateNotificationContent()
+                        }
+                    } else {
+                        updatePlaybackTime(pos, dur, updated, isPlaying)
+                        updateProgressViews()
+                        if (playChanged) {
+                            updateNotificationContent()
+                        }
                     }
                 }
             }
@@ -272,6 +288,12 @@ class FloatingLyricsService : Service() {
         val btnGenius = root.findViewById<View>(R.id.btnOverlayGenius)
 
         root.findViewById<TextView>(R.id.tvCompactLyric)?.isSelected = true
+        root.findViewById<TextView>(R.id.tvOverlayNextLine)?.setOnClickListener {
+            val nextIdx = activeIndex + 1
+            if (nextIdx in currentLines.indices) {
+                seekToOverlayLine(nextIdx)
+            }
+        }
 
         attachIslandTouchHandler(layoutMini, isExpandedHeader = false)
         attachIslandTouchHandler(layoutCompact, isExpandedHeader = false)
@@ -618,6 +640,8 @@ class FloatingLyricsService : Service() {
         activeIndex = -1
         virtualPositionMs = 0L
         manualSyncOffsetMs = 0L
+        seekIgnoreUntilSystemMs = 0L
+        overlayLineViews.clear()
 
         val root = overlayView
         val tvTitle = root?.findViewById<TextView>(R.id.tvOverlayTitle)
@@ -626,7 +650,8 @@ class FloatingLyricsService : Service() {
         val tvCompact = root?.findViewById<TextView>(R.id.tvCompactLyric)
         val tvCurrent = root?.findViewById<TextView>(R.id.tvOverlayCurrentLine)
         val tvNext = root?.findViewById<TextView>(R.id.tvOverlayNextLine)
-        val tvLyrics = root?.findViewById<TextView>(R.id.tvOverlayLyrics)
+        val tvEmpty = root?.findViewById<TextView>(R.id.tvOverlayEmptyStatus)
+        val container = root?.findViewById<LinearLayout>(R.id.containerOverlayLyrics)
         val scrollView = root?.findViewById<NestedScrollView>(R.id.scrollOverlayLyrics)
 
         tvTitle?.text = cleanTitle
@@ -636,7 +661,9 @@ class FloatingLyricsService : Service() {
         tvCompact?.isSelected = true
         tvCurrent?.text = "Поиск текста..."
         tvNext?.text = ""
-        tvLyrics?.text = "Загрузка текста..."
+        container?.removeAllViews()
+        tvEmpty?.visibility = View.VISIBLE
+        tvEmpty?.text = "Загрузка текста..."
         scrollView?.scrollTo(0, 0)
         updateNotificationContent()
 
@@ -661,13 +688,7 @@ class FloatingLyricsService : Service() {
                     currentLines
                 }
 
-                val starts = IntArray(currentLines.size)
-                var pos = 0
-                for (i in currentLines.indices) {
-                    starts[i] = pos
-                    pos += currentLines[i].text.length + 1
-                }
-                lineCharStarts = starts
+                populateOverlayLyrics(currentLines)
 
                 val dispArtist = lyricsResult.artist.ifBlank { cleanArtist }
                 val dispTitle = lyricsResult.title.ifBlank { cleanTitle }
@@ -676,14 +697,20 @@ class FloatingLyricsService : Service() {
                 tvMini?.text = "♪ $dispTitle"
 
                 applyHighlight(0, scroll = false, animateSwap = false)
+                if (getCurrentTrackPosition() > 0L) {
+                    recalculateActiveLineNow(advanceVirtual = false)
+                }
                 updateNotificationContent()
             }.onFailure {
                 if (!isActive) return@onFailure
+                overlayLineViews.clear()
+                container?.removeAllViews()
                 tvCompact?.text = "$cleanTitle — нет на Genius"
                 tvCompact?.isSelected = true
                 tvCurrent?.text = "Текст не найден"
                 tvNext?.text = "Нажмите «Genius» внизу для поиска"
-                tvLyrics?.text = "Текст не найден."
+                tvEmpty?.visibility = View.VISIBLE
+                tvEmpty?.text = "Текст не найден."
                 updateNotificationContent()
             }
         }
@@ -807,6 +834,98 @@ class FloatingLyricsService : Service() {
         }
     }
 
+    private fun populateOverlayLyrics(lines: List<LyricLine>) {
+        val root = overlayView ?: return
+        val container = root.findViewById<LinearLayout>(R.id.containerOverlayLyrics) ?: return
+        val tvEmpty = root.findViewById<TextView>(R.id.tvOverlayEmptyStatus)
+
+        container.removeAllViews()
+        overlayLineViews.clear()
+        tvEmpty?.visibility = if (lines.isEmpty()) View.VISIBLE else View.GONE
+
+        val selectableBg = TypedValue()
+        val hasSelectableBg = container.context.theme.resolveAttribute(
+            android.R.attr.selectableItemBackground,
+            selectableBg,
+            true
+        )
+
+        for (i in lines.indices) {
+            val line = lines[i]
+            val tv = TextView(container.context).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                text = line.text
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                setLineSpacing(dp(2).toFloat(), 1f)
+                setPadding(dp(4), dp(5), dp(4), dp(5))
+                isClickable = true
+                isLongClickable = true
+                if (hasSelectableBg) {
+                    setBackgroundResource(selectableBg.resourceId)
+                }
+                setOnClickListener { seekToOverlayLine(i) }
+                setOnLongClickListener {
+                    calibrateOverlaySyncToLine(i)
+                    true
+                }
+            }
+            container.addView(tv)
+            overlayLineViews.add(tv)
+        }
+    }
+
+    private fun resolveOverlayTimestampMs(idx: Int): Long {
+        val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
+        if (totalDurationMs <= 0L && effectiveDur > 0L) {
+            totalDurationMs = effectiveDur
+        }
+        if (!isSyncedSource && effectiveDur > 10_000L && syncedLines.firstOrNull()?.timeMs == -1L) {
+            syncedLines = GeniusLyricsFetcher.estimateLineTimestamps(currentLines, effectiveDur)
+        }
+        val timeline = if (syncedLines.size == currentLines.size) syncedLines else currentLines
+        return GeniusLyricsFetcher.resolveLineTimestampMs(timeline, idx, effectiveDur)
+    }
+
+    private fun seekToOverlayLine(idx: Int) {
+        if (idx !in currentLines.indices) return
+        val tappedTime = resolveOverlayTimestampMs(idx)
+        val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
+
+        if (tappedTime >= 0L) {
+            val seekPos = GeniusLyricsFetcher.computeSeekTargetMs(tappedTime, manualSyncOffsetMs, effectiveDur)
+            val sought = MediaNotificationListener.seekTo(seekPos)
+            if (sought) {
+                val now = SystemClock.elapsedRealtime()
+                seekIgnoreUntilSystemMs = now + 650L
+                lastKnownPositionMs = seekPos
+                lastUpdateTimeSystem = now
+                updateProgressViews()
+                overlayView?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                applyHighlight(idx, scroll = true, animateSwap = true)
+                updateNotificationContent()
+                return
+            } else {
+                virtualPositionMs = tappedTime
+            }
+        }
+        applyHighlight(idx, scroll = true, animateSwap = true)
+        Toast.makeText(this, "Не удалось перемотать трек", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun calibrateOverlaySyncToLine(idx: Int) {
+        if (idx !in currentLines.indices) return
+        val tappedTime = resolveOverlayTimestampMs(idx)
+        if (tappedTime >= 0L && totalDurationMs > 0L) {
+            manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
+            overlayView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            applyHighlight(idx, scroll = true, animateSwap = true)
+            Toast.makeText(this, "Синхронизация привязана к этой строке", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun applyHighlight(idx: Int, scroll: Boolean, animateSwap: Boolean) {
         if (idx < 0 || idx >= currentLines.size) return
         activeIndex = idx
@@ -815,7 +934,6 @@ class FloatingLyricsService : Service() {
         val tvCompact = root.findViewById<TextView>(R.id.tvCompactLyric)
         val tvCurrent = root.findViewById<TextView>(R.id.tvOverlayCurrentLine)
         val tvNext = root.findViewById<TextView>(R.id.tvOverlayNextLine)
-        val tvLyrics = root.findViewById<TextView>(R.id.tvOverlayLyrics)
         val scrollView = root.findViewById<NestedScrollView>(R.id.scrollOverlayLyrics)
 
         val currentLineText = currentLines[idx].text
@@ -825,33 +943,34 @@ class FloatingLyricsService : Service() {
         animateLineText(tvCurrent, currentLineText, animateSwap)
         tvNext?.text = nextText
 
-        val sb = SpannableStringBuilder()
-        for (i in currentLines.indices) {
-            val start = sb.length
-            val lineText = currentLines[i].text
-            sb.append(lineText)
-            val end = sb.length
-            val color = when {
-                lineText.trim().startsWith("[") && lineText.trim().endsWith("]") -> Color.parseColor("#1DB954")
-                i == idx -> Color.WHITE
-                i < idx -> Color.parseColor("#5E6368")
-                else -> Color.parseColor("#B3B8BE")
+        for (i in overlayLineViews.indices) {
+            val tv = overlayLineViews[i]
+            val trimmed = currentLines.getOrNull(i)?.text?.trim() ?: ""
+            val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
+            when {
+                isHeader -> {
+                    tv.setTextColor(Color.parseColor("#1DB954"))
+                    tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
+                }
+                i == idx -> {
+                    tv.setTextColor(Color.WHITE)
+                    tv.setTypeface(Typeface.create("sans-serif-black", Typeface.BOLD))
+                }
+                i < idx -> {
+                    tv.setTextColor(Color.parseColor("#5E6368"))
+                    tv.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
+                }
+                else -> {
+                    tv.setTextColor(Color.parseColor("#B3B8BE"))
+                    tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                }
             }
-            sb.setSpan(ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            if (i == idx) {
-                sb.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            if (i < currentLines.lastIndex) sb.append('\n')
         }
-        tvLyrics?.text = sb
 
-        if (scroll && idx < lineCharStarts.size && tvLyrics != null && scrollView != null) {
-            tvLyrics.post {
-                val layout = tvLyrics.layout ?: return@post
-                val charOffset = lineCharStarts[idx].coerceIn(0, sb.length)
-                val lineNum = layout.getLineForOffset(charOffset)
-                val topY = layout.getLineTop(lineNum)
-                val targetY = (topY - scrollView.height / 3).coerceAtLeast(0)
+        if (scroll && idx in overlayLineViews.indices && scrollView != null) {
+            val targetView = overlayLineViews[idx]
+            targetView.post {
+                val targetY = (targetView.top - scrollView.height / 3).coerceAtLeast(0)
                 scrollView.smoothScrollTo(0, targetY)
             }
         }
@@ -893,6 +1012,7 @@ class FloatingLyricsService : Service() {
         try {
             unregisterReceiver(trackReceiver)
         } catch (_: Exception) {}
+        overlayLineViews.clear()
         overlayView?.let {
             try {
                 windowManager?.removeView(it)
