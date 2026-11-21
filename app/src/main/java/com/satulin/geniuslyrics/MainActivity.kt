@@ -1,10 +1,13 @@
 package com.satulin.geniuslyrics
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -25,7 +28,9 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
@@ -41,9 +46,15 @@ import java.net.URLEncoder
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        const val EXTRA_OPEN_GENIUS_WEB = "extra_open_genius_web"
+    }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var lyricsAdapter: LyricsAdapter
     private lateinit var layoutManager: LinearLayoutManager
+
+    private var pendingStartIsland = false
 
     private var isAutoScrolling = true
     private var isUserManuallyScrolling = false
@@ -95,6 +106,9 @@ class MainActivity : AppCompatActivity() {
                     updatePlayStatusBadge(isPlaying)
                     updateProgressUI()
                 }
+                FloatingLyricsService.ACTION_ISLAND_STATE_CHANGED -> {
+                    updateIslandButtonState()
+                }
             }
         }
     }
@@ -107,6 +121,21 @@ class MainActivity : AppCompatActivity() {
         setupRecyclerView()
         setupUI()
         checkPermissions()
+        updateIslandButtonState()
+
+        if (intent?.getBooleanExtra(EXTRA_OPEN_GENIUS_WEB, false) == true) {
+            intent.removeExtra(EXTRA_OPEN_GENIUS_WEB)
+            openGeniusWeb()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent?.getBooleanExtra(EXTRA_OPEN_GENIUS_WEB, false) == true) {
+            intent.removeExtra(EXTRA_OPEN_GENIUS_WEB)
+            openGeniusWeb()
+        }
     }
 
     private fun setupRecyclerView() {
@@ -171,10 +200,17 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         checkPermissions()
+        updateIslandButtonState()
+
+        if (pendingStartIsland && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
+            pendingStartIsland = false
+            startLiveIslandService()
+        }
 
         val filter = IntentFilter().apply {
             addAction(MediaNotificationListener.ACTION_TRACK_CHANGED)
             addAction(MediaNotificationListener.ACTION_PLAYBACK_STATE)
+            addAction(FloatingLyricsService.ACTION_ISLAND_STATE_CHANGED)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -920,6 +956,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleFloatingLyrics() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            pendingStartIsland = true
             Toast.makeText(this, "Разрешите отображение поверх других приложений", Toast.LENGTH_LONG).show()
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -929,13 +966,41 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val intent = Intent(this, FloatingLyricsService::class.java)
         if (FloatingLyricsService.isRunning) {
-            stopService(intent)
-            Toast.makeText(this, "Плавающее окно выключено", Toast.LENGTH_SHORT).show()
+            FloatingLyricsService.setIslandEnabled(this, false)
+            stopService(Intent(this, FloatingLyricsService::class.java))
+            updateIslandButtonState(forceActive = false)
+            Toast.makeText(this, "Живой остров выключен", Toast.LENGTH_SHORT).show()
         } else {
-            startService(intent)
-            Toast.makeText(this, "Плавающее окно включено!", Toast.LENGTH_SHORT).show()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+            }
+            startLiveIslandService()
+        }
+    }
+
+    private fun startLiveIslandService() {
+        FloatingLyricsService.setIslandEnabled(this, true)
+        val intent = Intent(this, FloatingLyricsService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+        updateIslandButtonState(forceActive = true)
+        Toast.makeText(this, "Живой остров включён — работает в фоне поверх всех приложений!", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateIslandButtonState(forceActive: Boolean? = null) {
+        val active = forceActive ?: FloatingLyricsService.isRunning
+        if (active) {
+            binding.btnToggleFloating.text = "● Остров ВКЛ"
+            binding.btnToggleFloating.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#143520"))
+            binding.btnToggleFloating.setTextColor(Color.parseColor("#1DB954"))
+            binding.btnToggleFloating.strokeColor = ColorStateList.valueOf(Color.parseColor("#1DB954"))
+        } else {
+            binding.btnToggleFloating.text = "● Остров"
+            binding.btnToggleFloating.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#282828"))
+            binding.btnToggleFloating.setTextColor(Color.WHITE)
+            binding.btnToggleFloating.strokeColor = ColorStateList.valueOf(Color.parseColor("#3A3A3A"))
         }
     }
 

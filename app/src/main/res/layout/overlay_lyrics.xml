@@ -1,118 +1,415 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/overlayRoot"
-    android:layout_width="match_parent"
-    android:layout_height="340dp"
-    android:background="@drawable/overlay_bg"
-    android:elevation="12dp"
-    android:orientation="vertical"
-    android:padding="14dp">
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/islandRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
 
-    <!-- Header / Drag Bar -->
+    <!-- STATE 1: MINI CAPSULE PILL -->
     <LinearLayout
-        android:id="@+id/overlayHeader"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:id="@+id/layoutIslandMini"
+        android:layout_width="146dp"
+        android:layout_height="34dp"
+        android:background="@drawable/island_pill_bg"
+        android:elevation="14dp"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="14dp"
+            android:gravity="bottom"
+            android:orientation="horizontal">
+
+            <View
+                android:id="@+id/eqMini1"
+                android:layout_width="3dp"
+                android:layout_height="14dp"
+                android:background="@drawable/island_eq_bar" />
+
+            <View
+                android:id="@+id/eqMini2"
+                android:layout_width="3dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/island_eq_bar" />
+
+            <View
+                android:id="@+id/eqMini3"
+                android:layout_width="3dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/island_eq_bar" />
+        </LinearLayout>
 
         <TextView
-            android:id="@+id/tvOverlayTitle"
+            android:id="@+id/tvMiniLabel"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
             android:layout_weight="1"
             android:ellipsize="end"
-            android:fontFamily="sans-serif-black"
             android:maxLines="1"
-            android:text="Spotify Lyrics"
-            android:textColor="@color/accent_spotify"
-            android:textSize="14sp"
+            android:singleLine="true"
+            android:text="♪ Остров"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
             android:textStyle="bold" />
 
-        <!-- Auto-sync toggle -->
-        <ImageButton
-            android:id="@+id/btnOverlayScroll"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Синхронизация"
-            android:src="@android:drawable/ic_media_pause"
-            android:tint="@color/text_primary" />
-
-        <!-- Close button -->
-        <ImageButton
-            android:id="@+id/btnOverlayClose"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+        <View
+            android:layout_width="6dp"
+            android:layout_height="6dp"
             android:layout_marginStart="6dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Закрыть"
-            android:src="@android:drawable/ic_menu_close_clear_cancel"
-            android:tint="@color/text_secondary" />
+            android:background="@drawable/pill_sync" />
     </LinearLayout>
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginVertical="6dp"
-        android:background="@color/divider_color" />
-
-    <!-- Spotify Live Two-Line Synced Card -->
+    <!-- STATE 2: COMPACT LIVE LYRICS PILL (DEFAULT) -->
     <LinearLayout
-        android:id="@+id/layoutOverlayLive"
+        android:id="@+id/layoutIslandCompact"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="46dp"
+        android:background="@drawable/island_pill_bg"
+        android:elevation="16dp"
         android:orientation="vertical"
-        android:paddingVertical="4dp">
+        android:visibility="visible">
 
-        <TextView
-            android:id="@+id/tvOverlayCurrentLine"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:fontFamily="sans-serif-black"
-            android:lineSpacingExtra="2dp"
-            android:maxLines="2"
-            android:text="Ожидание трека..."
-            android:textColor="#FFFFFF"
-            android:textSize="16sp" />
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="14dp">
 
-        <TextView
-            android:id="@+id/tvOverlayNextLine"
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="16dp"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/eqCompact1"
+                    android:layout_width="3dp"
+                    android:layout_height="16dp"
+                    android:background="@drawable/island_eq_bar" />
+
+                <View
+                    android:id="@+id/eqCompact2"
+                    android:layout_width="3dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/island_eq_bar" />
+
+                <View
+                    android:id="@+id/eqCompact3"
+                    android:layout_width="3dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/island_eq_bar" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvCompactLyric"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="10dp"
+                android:layout_weight="1"
+                android:ellipsize="marquee"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:fontFamily="sans-serif-medium"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:maxLines="1"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:text="Включите трек…"
+                android:textColor="#FFFFFF"
+                android:textSize="13.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnCompactToMini"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:text="−"
+                android:textColor="#8E9398"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/pbCompactProgress"
+            style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="3dp"
-            android:ellipsize="end"
-            android:fontFamily="sans-serif-medium"
-            android:maxLines="2"
-            android:text=""
-            android:textColor="#B3B8BE"
-            android:textSize="13sp" />
+            android:layout_height="2dp"
+            android:layout_marginHorizontal="18dp"
+            android:layout_marginBottom="3dp"
+            android:max="1000"
+            android:progress="0"
+            android:progressBackgroundTint="#222222"
+            android:progressTint="@color/accent_spotify" />
     </LinearLayout>
 
-    <View
+    <!-- STATE 3: EXPANDED DYNAMIC ISLAND PANEL -->
+    <LinearLayout
+        android:id="@+id/layoutIslandExpanded"
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginVertical="6dp"
-        android:background="@color/divider_color" />
+        android:layout_height="360dp"
+        android:background="@drawable/island_expanded_bg"
+        android:elevation="20dp"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:visibility="gone">
 
-    <!-- Full Lyrics Scroll View -->
-    <androidx.core.widget.NestedScrollView
-        android:id="@+id/scrollOverlayLyrics"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:fillViewport="true">
-
-        <TextView
-            android:id="@+id/tvOverlayLyrics"
+        <!-- Header / Drag Bar -->
+        <LinearLayout
+            android:id="@+id/overlayHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-medium"
-            android:lineSpacingExtra="5dp"
-            android:text="Ожидание трека..."
-            android:textColor="@color/text_secondary"
-            android:textSize="14sp" />
-    </androidx.core.widget.NestedScrollView>
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-</LinearLayout>
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="16dp"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/eqExp1"
+                    android:layout_width="3dp"
+                    android:layout_height="16dp"
+                    android:background="@drawable/island_eq_bar" />
+
+                <View
+                    android:id="@+id/eqExp2"
+                    android:layout_width="3dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/island_eq_bar" />
+
+                <View
+                    android:id="@+id/eqExp3"
+                    android:layout_width="3dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="2dp"
+                    android:background="@drawable/island_eq_bar" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvOverlayTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-black"
+                    android:maxLines="1"
+                    android:text="Живой остров"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvOverlaySubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Ожидание трека..."
+                    android:textColor="#9EA3A8"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnOverlayOpenApp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Открыть приложение"
+                android:src="@android:drawable/ic_menu_view"
+                android:tint="#B3B3B3" />
+
+            <TextView
+                android:id="@+id/btnOverlayCollapse"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:text="⌃"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/btnOverlayClose"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Закрыть"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                android:tint="#9EA3A8" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="8dp"
+            android:background="#262626" />
+
+        <!-- Live Two-Line Spotlight -->
+        <LinearLayout
+            android:id="@+id/layoutOverlayLive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingVertical="2dp">
+
+            <TextView
+                android:id="@+id/tvOverlayCurrentLine"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-black"
+                android:lineSpacingExtra="2dp"
+                android:maxLines="2"
+                android:text="Ожидание трека..."
+                android:textColor="#FFFFFF"
+                android:textSize="17sp" />
+
+            <TextView
+                android:id="@+id/tvOverlayNextLine"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
+                android:maxLines="2"
+                android:text=""
+                android:textColor="#9EA3A8"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginVertical="6dp"
+            android:background="#262626" />
+
+        <!-- Full Lyrics Scroll View -->
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/scrollOverlayLyrics"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <TextView
+                android:id="@+id/tvOverlayLyrics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:lineSpacingExtra="5dp"
+                android:text="Ожидание трека..."
+                android:textColor="#B3B8BE"
+                android:textSize="13.5sp" />
+        </androidx.core.widget.NestedScrollView>
+
+        <!-- Bottom Sync & Progress Controls -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+
+            <ProgressBar
+                android:id="@+id/pbOverlayProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:max="1000"
+                android:progress="0"
+                android:progressBackgroundTint="#2A2A2A"
+                android:progressTint="@color/accent_spotify" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvOverlayTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="00:00 / --:--"
+                    android:textColor="#8E9398"
+                    android:textSize="11sp" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView
+                    android:id="@+id/btnOverlaySyncBack"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/pill_background"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp"
+                    android:text="-0.5s"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnOverlaySyncFwd"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/pill_background"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp"
+                    android:text="+0.5s"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <ImageButton
+                    android:id="@+id/btnOverlayScroll"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:layout_marginStart="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Пауза синхронизации"
+                    android:src="@android:drawable/ic_media_pause"
+                    android:tint="#1DB954" />
+
+                <TextView
+                    android:id="@+id/btnOverlayGenius"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/pill_genius"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="Genius"
+                    android:textColor="#000000"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

@@ -11,9 +11,11 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 class MediaNotificationListener : NotificationListenerService() {
 
@@ -779,6 +781,9 @@ class MediaNotificationListener : NotificationListenerService() {
             setPackage(applicationContext.packageName)
         }
         sendBroadcast(intent)
+        if (playing) {
+            maybeAutoStartIsland()
+        }
     }
 
     private fun updateMetadata(metadata: MediaMetadata, resetPositionOnTrackChange: Boolean = false) {
@@ -818,6 +823,9 @@ class MediaNotificationListener : NotificationListenerService() {
                     setPackage(applicationContext.packageName)
                 }
                 sendBroadcast(intent)
+                if (isPlaying) {
+                    maybeAutoStartIsland()
+                }
             }
         }
     }
@@ -839,6 +847,23 @@ class MediaNotificationListener : NotificationListenerService() {
             setPackage(applicationContext.packageName)
         }
         sendBroadcast(intent)
+        if (playing) {
+            maybeAutoStartIsland()
+        }
+    }
+
+    private fun maybeAutoStartIsland() {
+        try {
+            if (FloatingLyricsService.isIslandEnabled(applicationContext) &&
+                !FloatingLyricsService.isRunning &&
+                (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(applicationContext))
+            ) {
+                val svc = Intent(applicationContext, FloatingLyricsService::class.java)
+                ContextCompat.startForegroundService(applicationContext, svc)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-start island skipped: ${e.message}")
+        }
     }
 
     private fun Notification.isMediaNotification(): Boolean {

@@ -134,15 +134,6 @@
                         android:contentDescription="Обновить текст"
                         app:icon="@android:drawable/ic_menu_rotate"
                         app:iconTint="@color/text_secondary" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnToggleFloating"
-                        style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:contentDescription="Плавающее окно"
-                        app:icon="@android:drawable/ic_menu_crop"
-                        app:iconTint="@color/accent_spotify" />
                 </LinearLayout>
 
                 <TextView
@@ -213,7 +204,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Dedicated Two-Button Mode Switch Bar -->
+        <!-- Dedicated Three-Button Mode Switch Bar -->
         <LinearLayout
             android:id="@+id/layoutModeSwitch"
             android:layout_width="match_parent"
@@ -233,8 +224,8 @@
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
                 android:maxLines="1"
-                android:paddingHorizontal="8dp"
-                android:text="🎵 Текст (Караоке)"
+                android:paddingHorizontal="6dp"
+                android:text="🎵 Текст"
                 android:textColor="#000000"
                 android:textSize="12sp"
                 android:textStyle="bold"
@@ -244,24 +235,45 @@
                 android:id="@+id/btnOpenGeniusWeb"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="4dp"
+                android:layout_marginHorizontal="2dp"
                 android:layout_weight="1"
                 android:backgroundTint="#FFFF64"
                 android:ellipsize="end"
                 android:insetTop="0dp"
                 android:insetBottom="0dp"
                 android:maxLines="1"
-                android:paddingHorizontal="8dp"
-                android:text="Поиск на Genius"
+                android:paddingHorizontal="6dp"
+                android:text="Genius"
                 android:textColor="#000000"
                 android:textSize="12sp"
                 android:textStyle="bold"
                 app:cornerRadius="20dp"
                 app:icon="@android:drawable/ic_menu_search"
                 app:iconGravity="textStart"
-                app:iconPadding="6dp"
-                app:iconSize="15dp"
+                app:iconPadding="4dp"
+                app:iconSize="14dp"
                 app:iconTint="#000000" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnToggleFloating"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:backgroundTint="#282828"
+                android:ellipsize="end"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:maxLines="1"
+                android:paddingHorizontal="6dp"
+                android:text="● Остров"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                app:cornerRadius="20dp"
+                app:strokeColor="#3A3A3A"
+                app:strokeWidth="1dp" />
         </LinearLayout>
 
         <!-- Sleek Spotify Search Bar -->
