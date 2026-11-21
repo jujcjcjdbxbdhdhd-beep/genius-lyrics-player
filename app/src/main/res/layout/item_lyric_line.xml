@@ -7,8 +7,8 @@
     android:background="?attr/selectableItemBackground"
     android:gravity="center_vertical"
     android:orientation="horizontal"
-    android:paddingHorizontal="14dp"
-    android:paddingVertical="11dp">
+    android:paddingHorizontal="8dp"
+    android:paddingVertical="10dp">
 
     <View
         android:id="@+id/viewIndicator"
