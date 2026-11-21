@@ -1,6 +1,7 @@
 package com.satulin.geniuslyrics
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -82,6 +83,8 @@ class MainActivity : AppCompatActivity() {
     private var virtualPositionMs = 0L
     private var isManualSearchMode = false
     private var seekIgnoreUntilSystemMs = 0L
+    private var isKaraokeMode = true
+    private var cardStrokeAnimator: ValueAnimator? = null
 
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -126,6 +129,11 @@ class MainActivity : AppCompatActivity() {
                 FloatingLyricsService.ACTION_ISLAND_STATE_CHANGED -> {
                     updateIslandButtonState()
                 }
+                AppMotionPrefs.ACTION_PREFS_CHANGED -> {
+                    isKaraokeMode = AppMotionPrefs.isKaraokeEnabled(this@MainActivity)
+                    lyricsAdapter.motionStyle = AppMotionPrefs.getIslandStyle(this@MainActivity)
+                    applyKaraokeModeUI(animate = true)
+                }
             }
         }
     }
@@ -135,8 +143,10 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        isKaraokeMode = AppMotionPrefs.isKaraokeEnabled(this)
         setupRecyclerView()
         setupUI()
+        applyKaraokeModeUI(animate = false)
         checkPermissions()
         updateIslandButtonState()
 
@@ -163,7 +173,7 @@ class MainActivity : AppCompatActivity() {
         lyricsAdapter = LyricsAdapter(
             onLineClicked = { clickedPosition ->
                 isUserManuallyScrolling = false
-                binding.btnSyncCurrentLine.visibility = View.GONE
+                showSyncPill(false)
                 reSyncJob?.cancel()
 
                 val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
@@ -185,17 +195,23 @@ class MainActivity : AppCompatActivity() {
                         lastUpdateTimeSystem = now
                         updateProgressUI()
                         binding.rvLyrics.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                        selectLine(clickedPosition, smoothScroll = true, force = true)
+                        if (isKaraokeMode) {
+                            selectLine(clickedPosition, smoothScroll = true, force = true)
+                        }
                     } else {
                         virtualPositionMs = tappedTime
-                        selectLine(clickedPosition, smoothScroll = true, force = true)
+                        if (isKaraokeMode) {
+                            selectLine(clickedPosition, smoothScroll = true, force = true)
+                        }
                         Toast.makeText(this, "Не удалось перемотать — проверьте доступ к уведомлениям", Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     if (tappedTime >= 0L) {
                         virtualPositionMs = tappedTime
                     }
-                    selectLine(clickedPosition, smoothScroll = true, force = true)
+                    if (isKaraokeMode) {
+                        selectLine(clickedPosition, smoothScroll = true, force = true)
+                    }
                 }
             },
             onLineLongClicked = { clickedPosition ->
@@ -204,22 +220,26 @@ class MainActivity : AppCompatActivity() {
                 if (!isManualSearchMode && tappedTime >= 0L) {
                     manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
                     binding.rvLyrics.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                    selectLine(clickedPosition, smoothScroll = true, force = true)
+                    if (isKaraokeMode) {
+                        selectLine(clickedPosition, smoothScroll = true, force = true)
+                    }
                     Toast.makeText(this, "Синхронизация привязана к этой строке", Toast.LENGTH_SHORT).show()
                 }
             }
         )
         lyricsAdapter.fontSizeSp = currentFontSizeSp
+        lyricsAdapter.isKaraokeMode = isKaraokeMode
+        lyricsAdapter.motionStyle = AppMotionPrefs.getIslandStyle(this)
         binding.rvLyrics.adapter = lyricsAdapter
 
         // Detect user manual dragging: show Spotify "Return to Sync" pill
         binding.rvLyrics.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
-                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING && isKaraokeMode) {
                     isUserManuallyScrolling = true
                     if (lyricsLines.isNotEmpty()) {
-                        binding.btnSyncCurrentLine.visibility = View.VISIBLE
+                        showSyncPill(true)
                     }
                     scheduleAutoReSync()
                 }
@@ -228,7 +248,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSyncCurrentLine.setOnClickListener {
             isUserManuallyScrolling = false
-            binding.btnSyncCurrentLine.visibility = View.GONE
+            showSyncPill(false)
             reSyncJob?.cancel()
             val target = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
             selectLine(target, smoothScroll = true, force = true)
@@ -239,9 +259,9 @@ class MainActivity : AppCompatActivity() {
         reSyncJob?.cancel()
         reSyncJob = lifecycleScope.launch {
             delay(4000)
-            if (isActive) {
+            if (isActive && isKaraokeMode) {
                 isUserManuallyScrolling = false
-                binding.btnSyncCurrentLine.visibility = View.GONE
+                showSyncPill(false)
                 val target = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
                 selectLine(target, smoothScroll = true, force = true)
             }
@@ -252,6 +272,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         checkPermissions()
         updateIslandButtonState()
+        isKaraokeMode = AppMotionPrefs.isKaraokeEnabled(this)
+        lyricsAdapter.motionStyle = AppMotionPrefs.getIslandStyle(this)
+        applyKaraokeModeUI(animate = false)
 
         if (pendingStartIsland && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
             pendingStartIsland = false
@@ -262,6 +285,7 @@ class MainActivity : AppCompatActivity() {
             addAction(MediaNotificationListener.ACTION_TRACK_CHANGED)
             addAction(MediaNotificationListener.ACTION_PLAYBACK_STATE)
             addAction(FloatingLyricsService.ACTION_ISLAND_STATE_CHANGED)
+            addAction(AppMotionPrefs.ACTION_PREFS_CHANGED)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -349,7 +373,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnScrollToTop.setOnClickListener {
             isUserManuallyScrolling = false
-            binding.btnSyncCurrentLine.visibility = View.GONE
+            showSyncPill(false)
             reSyncJob?.cancel()
             manualSyncOffsetMs = 0L
             virtualPositionMs = 0L
@@ -388,13 +412,19 @@ class MainActivity : AppCompatActivity() {
             toggleFloatingLyrics()
         }
 
-        binding.btnModeLyrics.setOnClickListener {
+        binding.btnToggleKaraoke.setOnClickListener {
             if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
-                binding.webViewGeniusPage.stopLoading()
-                binding.layoutGeniusWebView.visibility = View.GONE
+                closeGeniusWeb()
             }
-            val target = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
-            selectLine(target, smoothScroll = true, force = true)
+            isKaraokeMode = !isKaraokeMode
+            AppMotionPrefs.setKaraokeEnabled(this, isKaraokeMode)
+            binding.btnToggleKaraoke.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            applyKaraokeModeUI(animate = true)
+            Toast.makeText(
+                this,
+                if (isKaraokeMode) "Караоке включено" else "Режим: просто текст",
+                Toast.LENGTH_SHORT
+            ).show()
         }
 
         binding.btnOpenGeniusWeb.setOnClickListener {
@@ -405,7 +435,143 @@ class MainActivity : AppCompatActivity() {
             openGeniusWeb()
         }
 
+        MotionUtils.attachTactilePress(
+            binding.btnToggleKaraoke,
+            binding.btnOpenGeniusWeb,
+            binding.btnToggleFloating,
+            binding.btnManualSearch,
+            binding.btnToggleScroll,
+            binding.btnSpeedDown,
+            binding.btnSpeedUp,
+            binding.btnFontDown,
+            binding.btnFontUp,
+            binding.btnScrollToTop,
+            binding.btnSyncCurrentLine,
+            binding.btnRefreshLyrics,
+            binding.btnImportFromGeniusWeb,
+            binding.btnPlaceholderGeniusWeb
+        )
+
         setupGeniusWebView()
+    }
+
+    private fun applyKaraokeModeUI(animate: Boolean) {
+        lyricsAdapter.isKaraokeMode = isKaraokeMode
+        lyricsAdapter.motionStyle = AppMotionPrefs.getIslandStyle(this)
+
+        if (isKaraokeMode) {
+            binding.btnToggleKaraoke.text = "🎤 Караоке"
+            binding.btnToggleKaraoke.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1DB954"))
+            binding.btnToggleKaraoke.setTextColor(Color.BLACK)
+        } else {
+            binding.btnToggleKaraoke.text = "📄 Текст"
+            binding.btnToggleKaraoke.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#282828"))
+            binding.btnToggleKaraoke.setTextColor(Color.WHITE)
+        }
+
+        val karaokeVis = if (isKaraokeMode) View.VISIBLE else View.GONE
+        binding.btnToggleScroll.visibility = karaokeVis
+        binding.btnSpeedDown.visibility = karaokeVis
+        binding.tvSpeed.visibility = karaokeVis
+        binding.btnSpeedUp.visibility = karaokeVis
+        binding.tvPlainTextModeLabel.visibility = if (isKaraokeMode) View.GONE else View.VISIBLE
+
+        if (!isKaraokeMode) {
+            showSyncPill(false)
+            stopAutoScroll()
+        } else {
+            if (isAutoScrolling) {
+                startAutoScrollLoop()
+            }
+            syncActiveLineToPosition(smoothScroll = animate)
+        }
+    }
+
+    private fun showSyncPill(visible: Boolean) {
+        val pill = binding.btnSyncCurrentLine
+        pill.animate().cancel()
+        if (visible) {
+            if (pill.visibility == View.VISIBLE && pill.alpha > 0.9f) return
+            val offsetPx = 22f * resources.displayMetrics.density
+            pill.visibility = View.VISIBLE
+            pill.alpha = 0f
+            pill.translationY = offsetPx
+            pill.scaleX = 0.88f
+            pill.scaleY = 0.88f
+            pill.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(240L)
+                .setInterpolator(MotionUtils.SPRING_OVERSHOOT)
+                .start()
+        } else {
+            if (pill.visibility == View.GONE) return
+            val offsetPx = 16f * resources.displayMetrics.density
+            pill.animate()
+                .alpha(0f)
+                .translationY(offsetPx)
+                .scaleX(0.92f)
+                .scaleY(0.92f)
+                .setDuration(160L)
+                .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                .withEndAction {
+                    pill.visibility = View.GONE
+                    pill.alpha = 1f
+                    pill.translationY = 0f
+                    pill.scaleX = 1f
+                    pill.scaleY = 1f
+                }
+                .start()
+        }
+    }
+
+    private fun animateTrackHeaderSwap() {
+        val dy = 10f * resources.displayMetrics.density
+        for (tv in listOf(binding.tvSongTitle, binding.tvSongArtist)) {
+            tv.animate().cancel()
+            tv.alpha = 0f
+            tv.translationY = dy
+            tv.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(260L)
+                .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                .start()
+        }
+        cardStrokeAnimator?.cancel()
+        cardStrokeAnimator = ValueAnimator.ofArgb(
+            Color.parseColor("#1ED760"),
+            Color.parseColor("#282828")
+        ).apply {
+            duration = 520L
+            interpolator = MotionUtils.EASE_OUT_CUBIC
+            addUpdateListener { anim ->
+                binding.cardNowPlaying.strokeColor = anim.animatedValue as Int
+            }
+            start()
+        }
+    }
+
+    private fun animateLyricsListEntrance() {
+        val density = resources.displayMetrics.density
+        binding.rvLyrics.post {
+            val count = binding.rvLyrics.childCount.coerceAtMost(14)
+            for (i in 0 until count) {
+                val child = binding.rvLyrics.getChildAt(i) ?: continue
+                child.animate().cancel()
+                child.alpha = 0f
+                child.translationY = 18f * density
+                child.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setStartDelay(i * 26L)
+                    .setDuration(300L)
+                    .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                    .start()
+            }
+        }
     }
 
     private fun updatePlaybackTime(positionMs: Long, durationMs: Long, updatedAt: Long, playing: Boolean) {
@@ -433,7 +599,7 @@ class MainActivity : AppCompatActivity() {
         if (totalDurationMs > 0L) {
             binding.tvTotalTime.text = formatTime(totalDurationMs)
             val progress = ((currentMs.toDouble() / totalDurationMs) * 1000).toInt().coerceIn(0, 1000)
-            binding.pbTrackProgress.progress = progress
+            MotionUtils.animateProgressSmooth(binding.pbTrackProgress, progress)
         } else {
             binding.tvTotalTime.text = "--:--"
             binding.pbTrackProgress.progress = 0
@@ -455,8 +621,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun startAutoScrollLoop() {
         scrollJob?.cancel()
+        if (!isKaraokeMode) return
         scrollJob = lifecycleScope.launch {
-            while (isActive && isAutoScrolling) {
+            while (isActive && isAutoScrolling && isKaraokeMode) {
                 if (lyricsLines.isNotEmpty()) {
                     updateProgressUI()
 
@@ -522,7 +689,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncActiveLineToPosition(smoothScroll: Boolean) {
-        if (isManualSearchMode || displayedLines.isEmpty()) return
+        if (!isKaraokeMode || isManualSearchMode || displayedLines.isEmpty()) return
         val effectiveMs = (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
         val bestIndex = findBestLineIndex(displayedLines, effectiveMs)
         if (bestIndex != -1 && bestIndex != lyricsAdapter.activeLineIndex) {
@@ -599,6 +766,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvSongTitle.text = cleanTitle
         binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
+        animateTrackHeaderSwap()
         updateProgressUI()
 
         if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
@@ -663,7 +831,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnPlaceholderGeniusWeb.visibility = View.GONE
         binding.tvLyricsPlaceholder.text = "Ищем текст на Genius и в базе караоке..."
         binding.rvLyrics.visibility = View.GONE
-        binding.btnSyncCurrentLine.visibility = View.GONE
+        showSyncPill(false)
         isUserManuallyScrolling = false
 
         lyricsLoadJob = lifecycleScope.launch {
@@ -692,7 +860,10 @@ class MainActivity : AppCompatActivity() {
                     lyricsLines
                 }
                 lyricsAdapter.submitLines(displayedLines)
-                selectLine(0, smoothScroll = false, force = true)
+                if (isKaraokeMode) {
+                    selectLine(0, smoothScroll = false, force = true)
+                }
+                animateLyricsListEntrance()
 
                 binding.tvSourceBadge.text = lyricsResult.sourceName
                 val displayArtist = when {
@@ -713,7 +884,7 @@ class MainActivity : AppCompatActivity() {
                     updateJumpToGeniusBanner()
                 }
 
-                if (isAutoScrolling) {
+                if (isKaraokeMode && isAutoScrolling) {
                     startAutoScrollLoop()
                 }
             }.onFailure { _ ->
@@ -775,7 +946,19 @@ class MainActivity : AppCompatActivity() {
 
         binding.etGeniusWebQuery.setText(query)
         binding.tvGeniusWebTitle.text = if (query.isNotBlank()) "Genius • $query" else "Genius.com"
-        binding.layoutGeniusWebView.visibility = View.VISIBLE
+        val sheet = binding.layoutGeniusWebView
+        if (sheet.visibility != View.VISIBLE) {
+            sheet.animate().cancel()
+            sheet.visibility = View.VISIBLE
+            sheet.alpha = 0f
+            sheet.translationY = 48f * resources.displayMetrics.density
+            sheet.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(260L)
+                .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                .start()
+        }
         binding.pbGeniusWeb.visibility = View.VISIBLE
         binding.pbGeniusWeb.progress = 20
         binding.btnImportFromGeniusWeb.visibility = View.GONE
@@ -789,6 +972,24 @@ class MainActivity : AppCompatActivity() {
         binding.webViewGeniusPage.loadUrl(urlToLoad)
         updateJumpToGeniusBanner()
         updateGeniusWebNavButtons()
+    }
+
+    private fun closeGeniusWeb() {
+        binding.webViewGeniusPage.stopLoading()
+        val sheet = binding.layoutGeniusWebView
+        if (sheet.visibility != View.VISIBLE) return
+        sheet.animate().cancel()
+        sheet.animate()
+            .alpha(0f)
+            .translationY(48f * resources.displayMetrics.density)
+            .setDuration(190L)
+            .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+            .withEndAction {
+                sheet.visibility = View.GONE
+                sheet.alpha = 1f
+                sheet.translationY = 0f
+            }
+            .start()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -968,14 +1169,16 @@ class MainActivity : AppCompatActivity() {
                         lyricsLines
                     }
                     lyricsAdapter.submitLines(displayedLines)
-                    selectLine(0, smoothScroll = false, force = true)
+                    if (isKaraokeMode) {
+                        selectLine(0, smoothScroll = false, force = true)
+                    }
+                    animateLyricsListEntrance()
                     binding.tvLyricsPlaceholder.visibility = View.GONE
                     binding.btnPlaceholderGeniusWeb.visibility = View.GONE
                     binding.rvLyrics.visibility = View.VISIBLE
                     binding.tvSourceBadge.text = imported.sourceName
-                    binding.webViewGeniusPage.stopLoading()
-                    binding.layoutGeniusWebView.visibility = View.GONE
-                    if (isAutoScrolling) startAutoScrollLoop()
+                    closeGeniusWeb()
+                    if (isKaraokeMode && isAutoScrolling) startAutoScrollLoop()
                     Toast.makeText(this, "Текст с Genius загружен в плеер!", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this, "Откройте страницу песни с текстом на Genius", Toast.LENGTH_SHORT).show()
@@ -984,8 +1187,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnCloseGeniusWeb.setOnClickListener {
-            binding.webViewGeniusPage.stopLoading()
-            binding.layoutGeniusWebView.visibility = View.GONE
+            closeGeniusWeb()
         }
 
         binding.btnReloadGeniusWeb.setOnClickListener {
@@ -1008,8 +1210,7 @@ class MainActivity : AppCompatActivity() {
                     if (binding.webViewGeniusPage.canGoBack()) {
                         binding.webViewGeniusPage.goBack()
                     } else {
-                        binding.webViewGeniusPage.stopLoading()
-                        binding.layoutGeniusWebView.visibility = View.GONE
+                        closeGeniusWeb()
                     }
                 } else {
                     isEnabled = false
@@ -1080,6 +1281,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopAutoScroll()
+        cardStrokeAnimator?.cancel()
         reSyncJob?.cancel()
         lyricsLoadJob?.cancel()
     }

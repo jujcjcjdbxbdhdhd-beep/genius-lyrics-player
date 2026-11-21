@@ -15,6 +15,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -28,6 +29,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -45,7 +48,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
-import kotlin.random.Random
+import kotlin.math.sin
 
 class FloatingLyricsService : Service() {
 
@@ -84,8 +87,19 @@ class FloatingLyricsService : Service() {
     private var layoutParams: WindowManager.LayoutParams? = null
     private var widthAnimator: ValueAnimator? = null
     private var snapAnimator: ValueAnimator? = null
+    private var borderGlowAnimator: ValueAnimator? = null
 
     private var currentState: IslandState = IslandState.COMPACT
+    private var currentStyle: IslandAnimStyle = IslandAnimStyle.FLY_IN
+    private var isKaraokeEnabled: Boolean = true
+    private var compactUsingA: Boolean = true
+    private var expandedUsingA: Boolean = true
+    private var compactSwapGen: Int = 0
+    private var expandedSwapGen: Int = 0
+    private var compactTypeJob: Job? = null
+    private var expandedTypeJob: Job? = null
+    private var eqPhase: Double = 0.0
+
     private var isForegroundStarted: Boolean = false
     private var isAutoScrolling: Boolean = true
     private var scrollJob: Job? = null
@@ -155,6 +169,12 @@ class FloatingLyricsService : Service() {
                         }
                     }
                 }
+                AppMotionPrefs.ACTION_PREFS_CHANGED -> {
+                    currentStyle = AppMotionPrefs.getIslandStyle(this@FloatingLyricsService)
+                    isKaraokeEnabled = AppMotionPrefs.isKaraokeEnabled(this@FloatingLyricsService)
+                    updateStyleChipsUI()
+                    applyKaraokeModeUI()
+                }
             }
         }
     }
@@ -223,6 +243,9 @@ class FloatingLyricsService : Service() {
         val themedContext = ContextThemeWrapper(this, R.style.Theme_GeniusLyrics)
         overlayView = LayoutInflater.from(themedContext).inflate(R.layout.overlay_lyrics, null)
 
+        currentStyle = AppMotionPrefs.getIslandStyle(this)
+        isKaraokeEnabled = AppMotionPrefs.isKaraokeEnabled(this)
+
         setupIslandViewsAndListeners()
 
         try {
@@ -236,10 +259,11 @@ class FloatingLyricsService : Service() {
 
         setIslandState(IslandState.COMPACT, animate = false)
 
-        // Register for track & playback updates
+        // Register for track, playback & motion preference updates
         val filter = IntentFilter().apply {
             addAction(MediaNotificationListener.ACTION_TRACK_CHANGED)
             addAction(MediaNotificationListener.ACTION_PLAYBACK_STATE)
+            addAction(AppMotionPrefs.ACTION_PREFS_CHANGED)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(trackReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -286,14 +310,38 @@ class FloatingLyricsService : Service() {
         val btnSyncBack = root.findViewById<View>(R.id.btnOverlaySyncBack)
         val btnSyncFwd = root.findViewById<View>(R.id.btnOverlaySyncFwd)
         val btnGenius = root.findViewById<View>(R.id.btnOverlayGenius)
+        val btnOverlayKaraoke = root.findViewById<TextView>(R.id.btnOverlayKaraoke)
+        val btnStyleFly = root.findViewById<TextView>(R.id.btnStyleFly)
+        val btnStyleFade = root.findViewById<TextView>(R.id.btnStyleFade)
+        val btnStyleSlide = root.findViewById<TextView>(R.id.btnStyleSlide)
+        val btnStylePop = root.findViewById<TextView>(R.id.btnStylePop)
+        val btnStyleTypewriter = root.findViewById<TextView>(R.id.btnStyleTypewriter)
 
-        root.findViewById<TextView>(R.id.tvCompactLyric)?.isSelected = true
+        root.findViewById<TextView>(R.id.tvCompactLyricA)?.isSelected = true
+        root.findViewById<TextView>(R.id.tvCompactLyricB)?.isSelected = true
         root.findViewById<TextView>(R.id.tvOverlayNextLine)?.setOnClickListener {
             val nextIdx = activeIndex + 1
             if (nextIdx in currentLines.indices) {
                 seekToOverlayLine(nextIdx)
             }
         }
+
+        MotionUtils.attachTactilePress(
+            btnCompactToMini,
+            btnOpenApp,
+            btnCollapse,
+            btnClose,
+            btnScroll,
+            btnSyncBack,
+            btnSyncFwd,
+            btnGenius,
+            btnOverlayKaraoke,
+            btnStyleFly,
+            btnStyleFade,
+            btnStyleSlide,
+            btnStylePop,
+            btnStyleTypewriter
+        )
 
         attachIslandTouchHandler(layoutMini, isExpandedHeader = false)
         attachIslandTouchHandler(layoutCompact, isExpandedHeader = false)
@@ -345,6 +393,149 @@ class FloatingLyricsService : Service() {
             recalculateActiveLineNow()
             val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
             Toast.makeText(this, "Синхронизация: $secStr", Toast.LENGTH_SHORT).show()
+        }
+
+        btnOverlayKaraoke?.setOnClickListener {
+            isKaraokeEnabled = !isKaraokeEnabled
+            AppMotionPrefs.setKaraokeEnabled(this, isKaraokeEnabled)
+            root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            applyKaraokeModeUI()
+            Toast.makeText(
+                this,
+                if (isKaraokeEnabled) "Режим: Караоке" else "Режим: Просто текст",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        btnStyleFly?.setOnClickListener { selectStyle(IslandAnimStyle.FLY_IN) }
+        btnStyleFade?.setOnClickListener { selectStyle(IslandAnimStyle.FADE) }
+        btnStyleSlide?.setOnClickListener { selectStyle(IslandAnimStyle.SLIDE_KINETIC) }
+        btnStylePop?.setOnClickListener { selectStyle(IslandAnimStyle.ELASTIC_POP) }
+        btnStyleTypewriter?.setOnClickListener { selectStyle(IslandAnimStyle.TYPEWRITER) }
+
+        updateStyleChipsUI()
+        applyKaraokeModeUI()
+    }
+
+    private fun selectStyle(style: IslandAnimStyle) {
+        currentStyle = style
+        AppMotionPrefs.setIslandStyle(this, style)
+        updateStyleChipsUI()
+        overlayView?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        pulseIslandBorder()
+
+        val previewLine = if (activeIndex in currentLines.indices) {
+            currentLines[activeIndex].text
+        } else {
+            "${currentTitle.ifBlank { "Живой остров" }} • ${style.label}"
+        }
+        setCompactTextAnimated(previewLine, animateSwap = true)
+        setExpandedTextAnimated(previewLine, animateSwap = true)
+    }
+
+    private fun makeChipDrawable(fillColor: Int, strokeColor: Int): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(16).toFloat()
+            setColor(fillColor)
+            setStroke(dp(1).coerceAtLeast(1), strokeColor)
+        }
+    }
+
+    private fun updateStyleChipsUI() {
+        val root = overlayView ?: return
+        val chipMap = listOf(
+            IslandAnimStyle.FLY_IN to root.findViewById<TextView>(R.id.btnStyleFly),
+            IslandAnimStyle.FADE to root.findViewById<TextView>(R.id.btnStyleFade),
+            IslandAnimStyle.SLIDE_KINETIC to root.findViewById<TextView>(R.id.btnStyleSlide),
+            IslandAnimStyle.ELASTIC_POP to root.findViewById<TextView>(R.id.btnStylePop),
+            IslandAnimStyle.TYPEWRITER to root.findViewById<TextView>(R.id.btnStyleTypewriter)
+        )
+        val activeFill = Color.parseColor("#143520")
+        val activeStroke = Color.parseColor("#1DB954")
+        val activeText = Color.parseColor("#1ED760")
+        val idleFill = Color.parseColor("#222222")
+        val idleStroke = Color.parseColor("#323232")
+        val idleText = Color.parseColor("#A6ACB2")
+
+        for ((style, tv) in chipMap) {
+            if (tv == null) continue
+            val isSelected = (style == currentStyle)
+            tv.background = makeChipDrawable(
+                if (isSelected) activeFill else idleFill,
+                if (isSelected) activeStroke else idleStroke
+            )
+            tv.setTextColor(if (isSelected) activeText else idleText)
+        }
+    }
+
+    private fun applyKaraokeModeUI() {
+        val root = overlayView ?: return
+        val btnKaraoke = root.findViewById<TextView>(R.id.btnOverlayKaraoke)
+        val layoutLive = root.findViewById<View>(R.id.layoutOverlayLive)
+        val dividerLive = root.findViewById<View>(R.id.dividerOverlayLive)
+        val scrollChips = root.findViewById<HorizontalScrollView>(R.id.scrollStyleChips)
+        val btnSyncBack = root.findViewById<View>(R.id.btnOverlaySyncBack)
+        val btnSyncFwd = root.findViewById<View>(R.id.btnOverlaySyncFwd)
+        val btnScroll = root.findViewById<View>(R.id.btnOverlayScroll)
+
+        if (isKaraokeEnabled) {
+            btnKaraoke?.text = "🎤 Караоке"
+            btnKaraoke?.background = makeChipDrawable(
+                Color.parseColor("#143520"),
+                Color.parseColor("#1DB954")
+            )
+            btnKaraoke?.setTextColor(Color.parseColor("#1ED760"))
+        } else {
+            btnKaraoke?.text = "📄 Текст"
+            btnKaraoke?.background = makeChipDrawable(
+                Color.parseColor("#2A2A2A"),
+                Color.parseColor("#4A4A4A")
+            )
+            btnKaraoke?.setTextColor(Color.WHITE)
+        }
+
+        val karaokeVis = if (isKaraokeEnabled) View.VISIBLE else View.GONE
+        layoutLive?.visibility = karaokeVis
+        dividerLive?.visibility = karaokeVis
+        scrollChips?.visibility = karaokeVis
+        btnSyncBack?.visibility = karaokeVis
+        btnSyncFwd?.visibility = karaokeVis
+        btnScroll?.visibility = karaokeVis
+
+        if (!isKaraokeEnabled) {
+            val plainLabel = if (currentTitle.isNotBlank()) {
+                val trackLabel = if (currentArtist.isNotBlank()) "$currentArtist — $currentTitle" else currentTitle
+                "♪ $trackLabel"
+            } else {
+                "♪ Просто текст"
+            }
+            setCompactTextAnimated(plainLabel, animateSwap = false)
+            renderPlainOverlayLines()
+            updateNotificationContent()
+        } else if (currentLines.isNotEmpty()) {
+            recalculateActiveLineNow(advanceVirtual = false)
+            if (activeIndex < 0) {
+                applyHighlight(0, scroll = true, animateSwap = false)
+            } else {
+                applyHighlight(activeIndex, scroll = true, animateSwap = false)
+            }
+            updateNotificationContent()
+        }
+    }
+
+    private fun renderPlainOverlayLines() {
+        for (i in overlayLineViews.indices) {
+            val tv = overlayLineViews[i]
+            val trimmed = currentLines.getOrNull(i)?.text?.trim() ?: ""
+            val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
+            if (isHeader) {
+                tv.setTextColor(Color.parseColor("#1DB954"))
+                tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
+            } else {
+                tv.setTextColor(Color.parseColor("#F0F2F5"))
+                tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            }
         }
     }
 
@@ -451,7 +642,33 @@ class FloatingLyricsService : Service() {
         layoutExpanded?.visibility = if (newState == IslandState.EXPANDED) View.VISIBLE else View.GONE
 
         if (newState == IslandState.COMPACT) {
-            root.findViewById<TextView>(R.id.tvCompactLyric)?.isSelected = true
+            root.findViewById<TextView>(R.id.tvCompactLyricA)?.isSelected = true
+            root.findViewById<TextView>(R.id.tvCompactLyricB)?.isSelected = true
+        }
+
+        val activeContainer = when (newState) {
+            IslandState.MINI -> layoutMini
+            IslandState.COMPACT -> layoutCompact
+            IslandState.EXPANDED -> layoutExpanded
+        }
+        if (animate && activeContainer != null) {
+            activeContainer.animate().cancel()
+            activeContainer.pivotY = 0f
+            activeContainer.alpha = 0f
+            activeContainer.scaleX = 0.93f
+            activeContainer.scaleY = 0.90f
+            activeContainer.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(240L)
+                .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                .start()
+            pulseIslandBorder()
+        } else if (activeContainer != null) {
+            activeContainer.alpha = 1f
+            activeContainer.scaleX = 1f
+            activeContainer.scaleY = 1f
         }
 
         val screenWidth = resources.displayMetrics.widthPixels
@@ -465,8 +682,8 @@ class FloatingLyricsService : Service() {
         val startWidth = if (params.width > 0) params.width else targetWidth
         if (animate && startWidth != targetWidth) {
             widthAnimator = ValueAnimator.ofInt(startWidth, targetWidth).apply {
-                duration = 240L
-                interpolator = DecelerateInterpolator()
+                duration = 280L
+                interpolator = OvershootInterpolator(0.75f)
                 addUpdateListener { anim ->
                     params.width = anim.animatedValue as Int
                     try {
@@ -481,6 +698,36 @@ class FloatingLyricsService : Service() {
                 windowManager?.updateViewLayout(root, params)
             } catch (_: Exception) {}
         }
+    }
+
+    private fun pulseIslandBorder() {
+        val root = overlayView ?: return
+        val targetView: View?
+        val fillColor: Int
+        val restStroke: Int
+        when (currentState) {
+            IslandState.COMPACT -> {
+                targetView = root.findViewById(R.id.layoutIslandCompact)
+                fillColor = Color.parseColor("#F7000000")
+                restStroke = Color.parseColor("#2E2E2E")
+            }
+            IslandState.EXPANDED -> {
+                targetView = root.findViewById(R.id.layoutIslandExpanded)
+                fillColor = Color.parseColor("#FA0A0A0A")
+                restStroke = Color.parseColor("#323232")
+            }
+            IslandState.MINI -> return
+        }
+        borderGlowAnimator?.cancel()
+        borderGlowAnimator = MotionUtils.createBorderGlowAnimator(
+            view = targetView,
+            fillColor = fillColor,
+            glowColor = Color.parseColor("#1ED760"),
+            restStrokeColor = restStroke,
+            cornerRadiusPx = dp(28).toFloat(),
+            restStrokeWidthPx = dp(1).coerceAtLeast(1),
+            glowStrokeWidthPx = dp(2).coerceAtLeast(2)
+        )?.apply { start() }
     }
 
     private fun launchMainApp(openGenius: Boolean) {
@@ -559,7 +806,9 @@ class FloatingLyricsService : Service() {
             "Живой остров активен"
         }
 
-        val lineText = if (activeIndex in currentLines.indices) {
+        val lineText = if (!isKaraokeEnabled && currentTitle.isNotBlank()) {
+            "Режим: Просто текст"
+        } else if (activeIndex in currentLines.indices) {
             currentLines[activeIndex].text
         } else if (currentTitle.isNotBlank()) {
             if (isMediaPlaying) "Синхронизация текста включена" else "Пауза"
@@ -614,8 +863,8 @@ class FloatingLyricsService : Service() {
         val currentMs = getCurrentTrackPosition()
         if (totalDurationMs > 0L) {
             val progress = ((currentMs.toDouble() / totalDurationMs) * 1000).toInt().coerceIn(0, 1000)
-            pbCompact?.progress = progress
-            pbOverlay?.progress = progress
+            MotionUtils.animateProgressSmooth(pbCompact, progress)
+            MotionUtils.animateProgressSmooth(pbOverlay, progress)
             tvTime?.text = "${formatTime(currentMs)} / ${formatTime(totalDurationMs)}"
         } else {
             pbCompact?.progress = 0
@@ -647,8 +896,6 @@ class FloatingLyricsService : Service() {
         val tvTitle = root?.findViewById<TextView>(R.id.tvOverlayTitle)
         val tvSub = root?.findViewById<TextView>(R.id.tvOverlaySubtitle)
         val tvMini = root?.findViewById<TextView>(R.id.tvMiniLabel)
-        val tvCompact = root?.findViewById<TextView>(R.id.tvCompactLyric)
-        val tvCurrent = root?.findViewById<TextView>(R.id.tvOverlayCurrentLine)
         val tvNext = root?.findViewById<TextView>(R.id.tvOverlayNextLine)
         val tvEmpty = root?.findViewById<TextView>(R.id.tvOverlayEmptyStatus)
         val container = root?.findViewById<LinearLayout>(R.id.containerOverlayLyrics)
@@ -657,9 +904,11 @@ class FloatingLyricsService : Service() {
         tvTitle?.text = cleanTitle
         tvSub?.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
         tvMini?.text = "♪ $cleanTitle"
-        tvCompact?.text = "Поиск: $cleanTitle…"
-        tvCompact?.isSelected = true
-        tvCurrent?.text = "Поиск текста..."
+        setCompactTextAnimated(
+            if (isKaraokeEnabled) "Поиск: $cleanTitle…" else "♪ $cleanTitle",
+            animateSwap = false
+        )
+        setExpandedTextAnimated("Поиск текста...", animateSwap = false)
         tvNext?.text = ""
         container?.removeAllViews()
         tvEmpty?.visibility = View.VISIBLE
@@ -696,18 +945,23 @@ class FloatingLyricsService : Service() {
                 tvSub?.text = if (dispArtist.isNotBlank()) "$dispArtist • ${lyricsResult.sourceName}" else lyricsResult.sourceName
                 tvMini?.text = "♪ $dispTitle"
 
-                applyHighlight(0, scroll = false, animateSwap = false)
-                if (getCurrentTrackPosition() > 0L) {
-                    recalculateActiveLineNow(advanceVirtual = false)
+                if (!isKaraokeEnabled) {
+                    val trackLabel = if (dispArtist.isNotBlank()) "$dispArtist — $dispTitle" else dispTitle
+                    setCompactTextAnimated("♪ $trackLabel", animateSwap = false)
+                    renderPlainOverlayLines()
+                } else {
+                    applyHighlight(0, scroll = false, animateSwap = false)
+                    if (getCurrentTrackPosition() > 0L) {
+                        recalculateActiveLineNow(advanceVirtual = false)
+                    }
                 }
                 updateNotificationContent()
             }.onFailure {
                 if (!isActive) return@onFailure
                 overlayLineViews.clear()
                 container?.removeAllViews()
-                tvCompact?.text = "$cleanTitle — нет на Genius"
-                tvCompact?.isSelected = true
-                tvCurrent?.text = "Текст не найден"
+                setCompactTextAnimated("$cleanTitle — нет на Genius", animateSwap = false)
+                setExpandedTextAnimated("Текст не найден", animateSwap = false)
                 tvNext?.text = "Нажмите «Genius» внизу для поиска"
                 tvEmpty?.visibility = View.VISIBLE
                 tvEmpty?.text = "Текст не найден."
@@ -722,39 +976,47 @@ class FloatingLyricsService : Service() {
             while (isActive) {
                 val root = overlayView
                 if (root != null) {
+                    eqPhase += 0.34
                     val bars: List<View?> = when (currentState) {
                         IslandState.MINI -> listOf(
                             root.findViewById(R.id.eqMini1),
                             root.findViewById(R.id.eqMini2),
-                            root.findViewById(R.id.eqMini3)
+                            root.findViewById(R.id.eqMini3),
+                            root.findViewById(R.id.eqMini4)
                         )
                         IslandState.COMPACT -> listOf(
                             root.findViewById(R.id.eqCompact1),
                             root.findViewById(R.id.eqCompact2),
-                            root.findViewById(R.id.eqCompact3)
+                            root.findViewById(R.id.eqCompact3),
+                            root.findViewById(R.id.eqCompact4)
                         )
                         IslandState.EXPANDED -> listOf(
                             root.findViewById(R.id.eqExp1),
                             root.findViewById(R.id.eqExp2),
-                            root.findViewById(R.id.eqExp3)
+                            root.findViewById(R.id.eqExp3),
+                            root.findViewById(R.id.eqExp4)
                         )
                     }
-                    for (bar in bars) {
-                        if (bar == null) continue
+                    val phaseOffsets = doubleArrayOf(0.0, 1.35, 2.7, 4.05)
+                    for (i in bars.indices) {
+                        val bar = bars[i] ?: continue
                         val h = bar.height
                         if (h > 0) bar.pivotY = h.toFloat()
                         val targetScale = if (isMediaPlaying) {
-                            Random.nextFloat() * 0.72f + 0.28f
+                            val primary = (sin(eqPhase + phaseOffsets[i]) + 1.0) * 0.5
+                            val harmonic = (sin(eqPhase * 1.9 + phaseOffsets[i] * 0.7) + 1.0) * 0.5
+                            (0.24 + 0.74 * (0.65 * primary + 0.35 * harmonic)).toFloat().coerceIn(0.22f, 1.0f)
                         } else {
-                            0.25f
+                            0.22f
                         }
                         bar.animate()
                             .scaleY(targetScale)
-                            .setDuration(130L)
+                            .setDuration(75L)
+                            .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
                             .start()
                     }
                 }
-                delay(140)
+                delay(70)
             }
         }
     }
@@ -764,7 +1026,7 @@ class FloatingLyricsService : Service() {
         scrollJob = scope.launch {
             while (isActive && isAutoScrolling) {
                 updateProgressViews()
-                if (currentLines.isNotEmpty() && isMediaPlaying) {
+                if (isKaraokeEnabled && currentLines.isNotEmpty() && isMediaPlaying) {
                     recalculateActiveLineNow(advanceVirtual = true)
                 }
                 delay(150)
@@ -773,7 +1035,7 @@ class FloatingLyricsService : Service() {
     }
 
     private fun recalculateActiveLineNow(advanceVirtual: Boolean = false) {
-        if (currentLines.isEmpty()) return
+        if (!isKaraokeEnabled || currentLines.isEmpty()) return
 
         if (!isSyncedSource && totalDurationMs > 10_000L && syncedLines.firstOrNull()?.timeMs == -1L) {
             syncedLines = GeniusLyricsFetcher.estimateLineTimestamps(currentLines, totalDurationMs)
@@ -814,23 +1076,266 @@ class FloatingLyricsService : Service() {
         }
     }
 
-    private fun animateLineText(tv: TextView?, newText: String, animateSwap: Boolean) {
+    private fun resetStageView(tv: TextView?) {
         if (tv == null) return
         tv.animate().cancel()
-        tv.text = newText
-        tv.isSelected = true
-        if (animateSwap) {
-            tv.alpha = 0f
-            tv.translationY = dp(8).toFloat()
-            tv.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(210L)
-                .setInterpolator(DecelerateInterpolator())
-                .start()
-        } else {
-            tv.alpha = 1f
-            tv.translationY = 0f
+        tv.alpha = 1f
+        tv.translationX = 0f
+        tv.translationY = 0f
+        tv.scaleX = 1f
+        tv.scaleY = 1f
+        tv.rotationX = 0f
+    }
+
+    private fun setCompactTextAnimated(newText: String, animateSwap: Boolean) {
+        val root = overlayView ?: return
+        val tvA = root.findViewById<TextView>(R.id.tvCompactLyricA) ?: return
+        val tvB = root.findViewById<TextView>(R.id.tvCompactLyricB) ?: return
+        val gen = ++compactSwapGen
+        compactTypeJob?.cancel()
+        if (!animateSwap) {
+            resetStageView(tvB)
+            tvB.visibility = View.GONE
+            compactUsingA = true
+            swapDualStageText(
+                outgoing = null,
+                incoming = tvA,
+                newText = newText,
+                animateSwap = false,
+                isCompact = true,
+                generationCheck = { gen == compactSwapGen }
+            )
+            return
+        }
+        val outgoing = if (compactUsingA) tvA else tvB
+        val incoming = if (compactUsingA) tvB else tvA
+        compactUsingA = !compactUsingA
+        compactTypeJob = swapDualStageText(
+            outgoing = outgoing,
+            incoming = incoming,
+            newText = newText,
+            animateSwap = true,
+            isCompact = true,
+            generationCheck = { gen == compactSwapGen }
+        )
+    }
+
+    private fun setExpandedTextAnimated(newText: String, animateSwap: Boolean) {
+        val root = overlayView ?: return
+        val tvA = root.findViewById<TextView>(R.id.tvOverlayCurrentA) ?: return
+        val tvB = root.findViewById<TextView>(R.id.tvOverlayCurrentB) ?: return
+        val gen = ++expandedSwapGen
+        expandedTypeJob?.cancel()
+        if (!animateSwap) {
+            resetStageView(tvB)
+            tvB.visibility = View.GONE
+            expandedUsingA = true
+            swapDualStageText(
+                outgoing = null,
+                incoming = tvA,
+                newText = newText,
+                animateSwap = false,
+                isCompact = false,
+                generationCheck = { gen == expandedSwapGen }
+            )
+            return
+        }
+        val outgoing = if (expandedUsingA) tvA else tvB
+        val incoming = if (expandedUsingA) tvB else tvA
+        expandedUsingA = !expandedUsingA
+        expandedTypeJob = swapDualStageText(
+            outgoing = outgoing,
+            incoming = incoming,
+            newText = newText,
+            animateSwap = true,
+            isCompact = false,
+            generationCheck = { gen == expandedSwapGen }
+        )
+    }
+
+    private fun swapDualStageText(
+        outgoing: TextView?,
+        incoming: TextView,
+        newText: String,
+        animateSwap: Boolean,
+        isCompact: Boolean,
+        generationCheck: () -> Boolean
+    ): Job? {
+        resetStageView(incoming)
+        incoming.visibility = View.VISIBLE
+        incoming.isSelected = true
+
+        if (!animateSwap) {
+            outgoing?.let {
+                resetStageView(it)
+                it.visibility = View.GONE
+            }
+            incoming.text = newText
+            return null
+        }
+
+        if (outgoing != null) {
+            outgoing.animate().cancel()
+            outgoing.visibility = View.VISIBLE
+        }
+
+        when (currentStyle) {
+            IslandAnimStyle.FLY_IN -> {
+                outgoing?.animate()
+                    ?.translationY(-dp(24).toFloat())
+                    ?.alpha(0f)
+                    ?.rotationX(-14f)
+                    ?.setDuration(180L)
+                    ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    ?.withEndAction {
+                        if (generationCheck()) {
+                            outgoing.visibility = View.GONE
+                            resetStageView(outgoing)
+                        }
+                    }
+                    ?.start()
+
+                incoming.text = newText
+                incoming.alpha = 0f
+                incoming.translationY = dp(24).toFloat()
+                incoming.rotationX = 18f
+                incoming.animate()
+                    .translationY(0f)
+                    .rotationX(0f)
+                    .alpha(1f)
+                    .setDuration(300L)
+                    .setInterpolator(MotionUtils.SPRING_OVERSHOOT)
+                    .withEndAction { incoming.isSelected = true }
+                    .start()
+                if (isCompact) pulseIslandBorder()
+                return null
+            }
+
+            IslandAnimStyle.FADE -> {
+                outgoing?.animate()
+                    ?.alpha(0f)
+                    ?.translationY(-dp(3).toFloat())
+                    ?.setDuration(170L)
+                    ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    ?.withEndAction {
+                        if (generationCheck()) {
+                            outgoing.visibility = View.GONE
+                            resetStageView(outgoing)
+                        }
+                    }
+                    ?.start()
+
+                incoming.text = newText
+                incoming.alpha = 0f
+                incoming.translationY = dp(4).toFloat()
+                incoming.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(320L)
+                    .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    .withEndAction { incoming.isSelected = true }
+                    .start()
+                return null
+            }
+
+            IslandAnimStyle.SLIDE_KINETIC -> {
+                outgoing?.animate()
+                    ?.translationX(-dp(48).toFloat())
+                    ?.alpha(0f)
+                    ?.setDuration(170L)
+                    ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    ?.withEndAction {
+                        if (generationCheck()) {
+                            outgoing.visibility = View.GONE
+                            resetStageView(outgoing)
+                        }
+                    }
+                    ?.start()
+
+                incoming.text = newText
+                incoming.alpha = 0f
+                incoming.translationX = dp(48).toFloat()
+                incoming.animate()
+                    .translationX(0f)
+                    .alpha(1f)
+                    .setDuration(280L)
+                    .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                    .withEndAction { incoming.isSelected = true }
+                    .start()
+                if (isCompact) pulseIslandBorder()
+                return null
+            }
+
+            IslandAnimStyle.ELASTIC_POP -> {
+                outgoing?.animate()
+                    ?.scaleX(0.85f)
+                    ?.scaleY(0.85f)
+                    ?.translationY(-dp(8).toFloat())
+                    ?.alpha(0f)
+                    ?.setDuration(160L)
+                    ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    ?.withEndAction {
+                        if (generationCheck()) {
+                            outgoing.visibility = View.GONE
+                            resetStageView(outgoing)
+                        }
+                    }
+                    ?.start()
+
+                incoming.text = newText
+                incoming.alpha = 0f
+                incoming.scaleX = 0.82f
+                incoming.scaleY = 0.82f
+                incoming.translationY = dp(8).toFloat()
+                incoming.animate()
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(320L)
+                    .setInterpolator(MotionUtils.SPRING_JUICY)
+                    .withEndAction { incoming.isSelected = true }
+                    .start()
+                if (isCompact) pulseIslandBorder()
+                return null
+            }
+
+            IslandAnimStyle.TYPEWRITER -> {
+                outgoing?.animate()
+                    ?.translationY(-dp(8).toFloat())
+                    ?.alpha(0f)
+                    ?.setDuration(140L)
+                    ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    ?.withEndAction {
+                        if (generationCheck()) {
+                            outgoing.visibility = View.GONE
+                            resetStageView(outgoing)
+                        }
+                    }
+                    ?.start()
+
+                incoming.alpha = 1f
+                incoming.text = ""
+                return scope.launch {
+                    val len = newText.length
+                    if (len == 0) {
+                        incoming.text = ""
+                        return@launch
+                    }
+                    val steps = len.coerceIn(1, 18)
+                    val stepDelay = (220L / steps).coerceIn(10L, 28L)
+                    for (s in 1 until steps) {
+                        if (!isActive || !generationCheck()) return@launch
+                        val endIdx = ((s.toDouble() / steps) * len).toInt().coerceIn(1, len)
+                        incoming.text = newText.substring(0, endIdx) + "▌"
+                        delay(stepDelay)
+                    }
+                    if (isActive && generationCheck()) {
+                        incoming.text = newText
+                        incoming.isSelected = true
+                    }
+                }
+            }
         }
     }
 
@@ -904,14 +1409,19 @@ class FloatingLyricsService : Service() {
                 lastUpdateTimeSystem = now
                 updateProgressViews()
                 overlayView?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                applyHighlight(idx, scroll = true, animateSwap = true)
+                if (isKaraokeEnabled) {
+                    applyHighlight(idx, scroll = true, animateSwap = true)
+                    pulseIslandBorder()
+                }
                 updateNotificationContent()
                 return
             } else {
                 virtualPositionMs = tappedTime
             }
         }
-        applyHighlight(idx, scroll = true, animateSwap = true)
+        if (isKaraokeEnabled) {
+            applyHighlight(idx, scroll = true, animateSwap = true)
+        }
         Toast.makeText(this, "Не удалось перемотать трек", Toast.LENGTH_SHORT).show()
     }
 
@@ -921,7 +1431,9 @@ class FloatingLyricsService : Service() {
         if (tappedTime >= 0L && totalDurationMs > 0L) {
             manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
             overlayView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            applyHighlight(idx, scroll = true, animateSwap = true)
+            if (isKaraokeEnabled) {
+                applyHighlight(idx, scroll = true, animateSwap = true)
+            }
             Toast.makeText(this, "Синхронизация привязана к этой строке", Toast.LENGTH_SHORT).show()
         }
     }
@@ -931,16 +1443,19 @@ class FloatingLyricsService : Service() {
         activeIndex = idx
 
         val root = overlayView ?: return
-        val tvCompact = root.findViewById<TextView>(R.id.tvCompactLyric)
-        val tvCurrent = root.findViewById<TextView>(R.id.tvOverlayCurrentLine)
         val tvNext = root.findViewById<TextView>(R.id.tvOverlayNextLine)
         val scrollView = root.findViewById<NestedScrollView>(R.id.scrollOverlayLyrics)
+
+        if (!isKaraokeEnabled) {
+            renderPlainOverlayLines()
+            return
+        }
 
         val currentLineText = currentLines[idx].text
         val nextText = currentLines.getOrNull(idx + 1)?.text ?: ""
 
-        animateLineText(tvCompact, currentLineText, animateSwap)
-        animateLineText(tvCurrent, currentLineText, animateSwap)
+        setCompactTextAnimated(currentLineText, animateSwap)
+        setExpandedTextAnimated(currentLineText, animateSwap)
         tvNext?.text = nextText
 
         for (i in overlayLineViews.indices) {
@@ -1005,6 +1520,9 @@ class FloatingLyricsService : Service() {
         isRunning = false
         widthAnimator?.cancel()
         snapAnimator?.cancel()
+        borderGlowAnimator?.cancel()
+        compactTypeJob?.cancel()
+        expandedTypeJob?.cancel()
         stopSyncLoop()
         equalizerJob?.cancel()
         loadJob?.cancel()

@@ -15,6 +15,7 @@ private val COLOR_HEADER = Color.parseColor("#1DB954")
 private val COLOR_ACTIVE = Color.parseColor("#FFFFFF")
 private val COLOR_UPCOMING = Color.parseColor("#B3B8BE")
 private val COLOR_PAST = Color.parseColor("#5E6368")
+private val COLOR_PLAIN_TEXT = Color.parseColor("#F0F2F5")
 
 class LyricsAdapter(
     private var lines: List<LyricLine> = emptyList(),
@@ -27,7 +28,7 @@ class LyricsAdapter(
             val prev = field
             if (prev == value) return
             field = value
-            if (lines.isEmpty()) return
+            if (!isKaraokeMode || lines.isEmpty()) return
             val start = when {
                 prev < 0 -> 0
                 value < 0 -> 0
@@ -47,6 +48,15 @@ class LyricsAdapter(
             notifyDataSetChanged()
         }
 
+    var isKaraokeMode: Boolean = true
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyDataSetChanged()
+        }
+
+    var motionStyle: IslandAnimStyle = IslandAnimStyle.FLY_IN
+
     fun submitLines(newLines: List<LyricLine>) {
         lines = newLines
         activeLineIndex = if (newLines.isNotEmpty()) 0 else -1
@@ -61,7 +71,7 @@ class LyricsAdapter(
 
     override fun onBindViewHolder(holder: LyricViewHolder, position: Int) {
         val line = lines[position]
-        holder.bind(line, position, activeLineIndex, fontSizeSp, animateColor = false)
+        holder.bind(line, position, activeLineIndex, fontSizeSp, isKaraokeMode, motionStyle, animateColor = false)
         holder.itemView.setOnClickListener {
             val idx = holder.adapterPosition
             if (idx != RecyclerView.NO_POSITION) {
@@ -86,7 +96,7 @@ class LyricsAdapter(
     ) {
         if (payloads.contains(PAYLOAD_ACTIVE)) {
             val line = lines[position]
-            holder.applyState(line, position, activeLineIndex, fontSizeSp, animateColor = true)
+            holder.applyState(line, position, activeLineIndex, fontSizeSp, isKaraokeMode, motionStyle, animateColor = true)
         } else {
             super.onBindViewHolder(holder, position, payloads)
         }
@@ -105,17 +115,23 @@ class LyricsAdapter(
             position: Int,
             activeIndex: Int,
             fontSize: Float,
+            isKaraokeMode: Boolean,
+            motionStyle: IslandAnimStyle,
             animateColor: Boolean
         ) {
             tvLine.text = line.text
+            tvLine.animate().cancel()
+            viewIndicator.animate().cancel()
             // 100% crisp vector rendering: zero view scaling, zero blur!
             tvLine.alpha = 1.0f
+            tvLine.translationX = 0f
+            tvLine.translationY = 0f
             itemView.scaleX = 1.0f
             itemView.scaleY = 1.0f
             itemView.translationX = 0f
             tvLine.setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
 
-            applyState(line, position, activeIndex, fontSize, animateColor)
+            applyState(line, position, activeIndex, fontSize, isKaraokeMode, motionStyle, animateColor)
         }
 
         fun applyState(
@@ -123,42 +139,155 @@ class LyricsAdapter(
             position: Int,
             activeIndex: Int,
             fontSize: Float,
+            isKaraokeMode: Boolean,
+            motionStyle: IslandAnimStyle,
             animateColor: Boolean
         ) {
             val trimmed = line.text.trim()
             val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
+            val density = itemView.resources.displayMetrics.density
+
+            if (!isKaraokeMode) {
+                tvLine.animate().cancel()
+                viewIndicator.animate().cancel()
+                tvLine.alpha = 1.0f
+                tvLine.translationX = 0f
+                tvLine.translationY = 0f
+                viewIndicator.visibility = View.GONE
+                val targetColor = if (isHeader) {
+                    tvLine.textSize = (fontSize - 4f).coerceAtLeast(12f)
+                    COLOR_HEADER
+                } else {
+                    tvLine.textSize = fontSize
+                    COLOR_PLAIN_TEXT
+                }
+                colorAnimator?.cancel()
+                currentColor = targetColor
+                tvLine.setTextColor(targetColor)
+                return
+            }
+
             val isActive = position == activeIndex
             val isPast = activeIndex >= 0 && position < activeIndex
 
             val targetColor: Int
             when {
                 isHeader -> {
+                    viewIndicator.animate().cancel()
+                    viewIndicator.scaleY = 1f
+                    viewIndicator.alpha = 1f
                     viewIndicator.visibility = View.INVISIBLE
                     tvLine.textSize = (fontSize - 5f).coerceAtLeast(12f)
                     targetColor = COLOR_HEADER
                 }
                 isActive -> {
                     viewIndicator.visibility = View.VISIBLE
+                    if (animateColor) {
+                        viewIndicator.animate().cancel()
+                        viewIndicator.pivotY = (viewIndicator.height.takeIf { it > 0 }?.toFloat() ?: (24f * density)) * 0.5f
+                        viewIndicator.scaleY = 0.15f
+                        viewIndicator.alpha = 0f
+                        viewIndicator.animate()
+                            .scaleY(1.0f)
+                            .alpha(1.0f)
+                            .setDuration(260L)
+                            .setInterpolator(MotionUtils.SPRING_JUICY)
+                            .start()
+                    } else {
+                        viewIndicator.scaleY = 1f
+                        viewIndicator.alpha = 1f
+                    }
                     tvLine.textSize = fontSize + 2.5f
                     targetColor = COLOR_ACTIVE
                 }
                 isPast -> {
+                    viewIndicator.animate().cancel()
+                    viewIndicator.scaleY = 1f
+                    viewIndicator.alpha = 1f
                     viewIndicator.visibility = View.INVISIBLE
                     tvLine.textSize = fontSize
                     targetColor = COLOR_PAST
                 }
                 else -> {
+                    viewIndicator.animate().cancel()
+                    viewIndicator.scaleY = 1f
+                    viewIndicator.alpha = 1f
                     viewIndicator.visibility = View.INVISIBLE
                     tvLine.textSize = fontSize
                     targetColor = COLOR_UPCOMING
                 }
             }
 
+            tvLine.animate().cancel()
+            if (isActive && animateColor && !isHeader) {
+                when (motionStyle) {
+                    IslandAnimStyle.FLY_IN -> {
+                        tvLine.alpha = 1f
+                        tvLine.translationY = 10f * density
+                        tvLine.translationX = 5f * density
+                        tvLine.animate()
+                            .translationY(0f)
+                            .translationX(0f)
+                            .setDuration(260L)
+                            .setInterpolator(MotionUtils.SPRING_OVERSHOOT)
+                            .start()
+                    }
+                    IslandAnimStyle.FADE -> {
+                        tvLine.translationX = 0f
+                        tvLine.translationY = 0f
+                        tvLine.alpha = 0.45f
+                        tvLine.animate()
+                            .alpha(1f)
+                            .setDuration(280L)
+                            .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                            .start()
+                    }
+                    IslandAnimStyle.SLIDE_KINETIC -> {
+                        tvLine.translationY = 0f
+                        tvLine.translationX = 20f * density
+                        tvLine.alpha = 0.65f
+                        tvLine.animate()
+                            .translationX(0f)
+                            .alpha(1f)
+                            .setDuration(250L)
+                            .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                            .start()
+                    }
+                    IslandAnimStyle.ELASTIC_POP -> {
+                        tvLine.alpha = 1f
+                        tvLine.translationX = 10f * density
+                        tvLine.translationY = 5f * density
+                        tvLine.animate()
+                            .translationX(0f)
+                            .translationY(0f)
+                            .setDuration(270L)
+                            .setInterpolator(MotionUtils.SPRING_JUICY)
+                            .start()
+                    }
+                    IslandAnimStyle.TYPEWRITER -> {
+                        tvLine.translationY = 0f
+                        tvLine.translationX = 8f * density
+                        tvLine.alpha = 0.4f
+                        tvLine.animate()
+                            .translationX(0f)
+                            .alpha(1f)
+                            .setDuration(190L)
+                            .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                            .start()
+                    }
+                }
+            } else {
+                tvLine.alpha = 1f
+                tvLine.translationX = 0f
+                tvLine.translationY = 0f
+            }
+
             colorAnimator?.cancel()
             if (animateColor && currentColor != targetColor) {
                 val startColor = currentColor
                 colorAnimator = ValueAnimator.ofArgb(startColor, targetColor).apply {
-                    duration = 220L
+                    duration = 240L
+                    interpolator = MotionUtils.EASE_OUT_CUBIC
                     addUpdateListener { anim ->
                         val c = anim.animatedValue as Int
                         currentColor = c

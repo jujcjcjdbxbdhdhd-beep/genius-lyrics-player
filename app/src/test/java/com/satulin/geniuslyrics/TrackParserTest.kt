@@ -297,4 +297,36 @@ class TrackParserTest {
         assertEquals(-1L, GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 5, 180_000L))
         assertEquals(-1L, GeniusLyricsFetcher.resolveLineTimestampMs(unsynced, 0, 0L))
     }
+
+    @Test
+    fun testIslandAnimStyles() {
+        val allStyles = IslandAnimStyle.values()
+        assertEquals(5, allStyles.size)
+
+        // ID lookup and default fallback
+        assertEquals(IslandAnimStyle.FLY_IN, IslandAnimStyle.fromId("fly_in"))
+        assertEquals(IslandAnimStyle.FADE, IslandAnimStyle.fromId("fade"))
+        assertEquals(IslandAnimStyle.SLIDE_KINETIC, IslandAnimStyle.fromId("slide"))
+        assertEquals(IslandAnimStyle.ELASTIC_POP, IslandAnimStyle.fromId("pop"))
+        assertEquals(IslandAnimStyle.TYPEWRITER, IslandAnimStyle.fromId("typewriter"))
+        assertEquals(IslandAnimStyle.FLY_IN, IslandAnimStyle.fromId(null))
+        assertEquals(IslandAnimStyle.FLY_IN, IslandAnimStyle.fromId("unknown_style"))
+
+        // Cycling wraps smoothly across all 5 styles
+        var cursor = IslandAnimStyle.FLY_IN
+        val seen = mutableListOf(cursor)
+        for (i in 0 until allStyles.size - 1) {
+            cursor = IslandAnimStyle.nextStyle(cursor)
+            seen.add(cursor)
+        }
+        assertEquals(allStyles.toList(), seen)
+        assertEquals(IslandAnimStyle.FLY_IN, IslandAnimStyle.nextStyle(cursor))
+
+        // Uniqueness and non-blank Russian labels
+        assertEquals(allStyles.size, allStyles.map { it.id }.toSet().size)
+        for (style in allStyles) {
+            assertTrue(style.label.isNotBlank())
+            assertTrue(style.shortLabel.isNotBlank())
+        }
+    }
 }
