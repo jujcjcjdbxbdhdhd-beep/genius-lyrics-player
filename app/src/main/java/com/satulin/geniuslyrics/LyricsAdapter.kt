@@ -142,7 +142,6 @@ class LyricsAdapter(
     override fun getItemCount(): Int = lines.size
 
     class LyricViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        private val container: View = itemView.findViewById(R.id.lyricRowContainer)
         private val tvLine: TextView = itemView.findViewById(R.id.tvLyricLine)
         private val viewIndicator: View = itemView.findViewById(R.id.viewIndicator)
         private var colorAnimator: ValueAnimator? = null
@@ -232,7 +231,6 @@ class LyricsAdapter(
                 tvLine.rotationX = 0f
                 tvLine.text = line.text
                 viewIndicator.visibility = View.GONE
-                container.background = null
                 val targetColor = if (isHeader) {
                     tvLine.textSize = (fontSize - 4f).coerceAtLeast(12f)
                     COLOR_HEADER
@@ -255,12 +253,10 @@ class LyricsAdapter(
                     viewIndicator.scaleY = 1f
                     viewIndicator.alpha = 1f
                     viewIndicator.visibility = View.INVISIBLE
-                    container.background = null
                     tvLine.textSize = (fontSize - 5f).coerceAtLeast(12f)
                     targetColor = COLOR_HEADER
                 }
                 isActive -> {
-                    container.setBackgroundResource(R.drawable.lyric_active_card_bg)
                     viewIndicator.visibility = View.VISIBLE
                     if (animateColor) {
                         viewIndicator.animate().cancel()
@@ -281,7 +277,6 @@ class LyricsAdapter(
                     targetColor = COLOR_ACTIVE
                 }
                 isPast -> {
-                    container.background = null
                     viewIndicator.animate().cancel()
                     viewIndicator.scaleY = 1f
                     viewIndicator.alpha = 1f
@@ -290,7 +285,6 @@ class LyricsAdapter(
                     targetColor = COLOR_PAST
                 }
                 else -> {
-                    container.background = null
                     viewIndicator.animate().cancel()
                     viewIndicator.scaleY = 1f
                     viewIndicator.alpha = 1f

@@ -709,7 +709,7 @@ class MainActivity : AppCompatActivity() {
         cardStrokeAnimator?.cancel()
         cardStrokeAnimator = ValueAnimator.ofArgb(
             Color.parseColor("#39FF88"),
-            Color.parseColor("#283447")
+            Color.parseColor("#1E2736")
         ).apply {
             duration = 520L
             interpolator = MotionUtils.EASE_OUT_CUBIC

@@ -12,7 +12,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
 import android.text.Spanned
-import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.MotionEvent
@@ -376,10 +375,9 @@ object MotionUtils {
             return spannable
         }
 
-        val sungColor = Color.parseColor("#E6EBF0")
+        val sungColor = Color.WHITE
         val activeWordColor = Color.parseColor("#39FF88")
-        val activeWordBg = Color.argb(66, 29, 185, 84)
-        val upcomingColor = Color.parseColor("#6A7382")
+        val upcomingColor = Color.parseColor("#5E6878")
 
         for (i in beat.tokens.indices) {
             val tok = beat.tokens[i]
@@ -399,12 +397,6 @@ object MotionUtils {
                 i == beat.activeWordIndex -> {
                     spannable.setSpan(
                         ForegroundColorSpan(activeWordColor),
-                        start,
-                        end,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                    spannable.setSpan(
-                        BackgroundColorSpan(activeWordBg),
                         start,
                         end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
