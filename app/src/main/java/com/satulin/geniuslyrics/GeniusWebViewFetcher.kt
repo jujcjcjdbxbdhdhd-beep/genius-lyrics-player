@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -25,11 +26,12 @@ import kotlin.coroutines.resume
 /**
  * Uses Android's built-in Chromium WebView engine to search and read lyrics directly
  * from genius.com when OkHttp requests are rejected by TLS/bot filters.
- * Blocks images, fonts, CSS, and third-party ad scripts for fast (<1s) loading.
+ * Blocks heavy images, fonts, video, and third-party ad scripts for fast loading.
  */
 object GeniusWebViewFetcher {
 
     private const val TAG = "GeniusWebViewFetcher"
+    private const val CF_CHALLENGE_MARKER = "__CF_CHALLENGE__"
     private val mutex = Mutex()
 
     @SuppressLint("StaticFieldLeak")
@@ -38,13 +40,41 @@ object GeniusWebViewFetcher {
     data class GeniusHit(
         val title: String,
         val artist: String,
-        val url: String
+        val url: String,
+        val artistNames: String = artist
     )
+
+    const val EXTRACT_LYRICS_JS: String = """(function() {
+    var containers = document.querySelectorAll('div[data-lyrics-container="true"]');
+    if (!containers || containers.length === 0) {
+        var legacy = document.querySelector('.lyrics');
+        return legacy ? (legacy.innerText || legacy.textContent || '').trim() : '';
+    }
+    var parts = [];
+    for (var i = 0; i < containers.length; i++) {
+        var clone = containers[i].cloneNode(true);
+        var junk = clone.querySelectorAll('[data-exclude-from-selection="true"], [class*="LyricsHeader"], script, style, button');
+        for (var j = 0; j < junk.length; j++) {
+            junk[j].remove();
+        }
+        var brs = clone.querySelectorAll('br');
+        for (var b = 0; b < brs.length; b++) {
+            brs[b].replaceWith(document.createTextNode('\n'));
+        }
+        var blocks = clone.querySelectorAll('div, p');
+        for (var k = 0; k < blocks.length; k++) {
+            blocks[k].insertAdjacentText('beforebegin', '\n');
+        }
+        var txt = (clone.textContent || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
+        if (txt.length > 0) parts.push(txt);
+    }
+    return parts.join('\n\n');
+})()"""
 
     private val BLOCKED_EXTENSIONS = listOf(
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
         ".woff", ".woff2", ".ttf", ".eot", ".otf",
-        ".mp4", ".webm", ".mp3", ".ogg", ".css"
+        ".mp4", ".webm", ".mp3", ".ogg"
     )
 
     private val BLOCKED_HOSTS = listOf(
@@ -64,8 +94,17 @@ object GeniusWebViewFetcher {
             settings.loadsImagesAutomatically = false
             settings.blockNetworkImage = true
             settings.cacheMode = WebSettings.LOAD_DEFAULT
-            settings.userAgentString =
-                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+            val defaultUa = settings.userAgentString
+            if (!defaultUa.isNullOrBlank()) {
+                settings.userAgentString = defaultUa.replace("; wv", "")
+            }
+        }
+        try {
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(wv, true)
+        } catch (e: Exception) {
+            Log.w(TAG, "CookieManager init warning: ${e.message}")
         }
         sharedWebView = wv
         return wv
@@ -97,7 +136,8 @@ object GeniusWebViewFetcher {
         url: String,
         jsExpr: String,
         timeoutMs: Long = 8000L,
-        postLoadDelayMs: Long = 150L
+        postLoadDelayMs: Long = 150L,
+        maxPollAttempts: Int = 4
     ): String? = withTimeoutOrNull(timeoutMs) {
         withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
@@ -112,6 +152,47 @@ object GeniusWebViewFetcher {
                             handler.removeCallbacksAndMessages(null)
                             if (cont.isActive) cont.resume(result)
                         }
+                    }
+
+                    val wrappedJs = """
+                        (function() {
+                            var t = (document.title || '').toLowerCase();
+                            var b = (document.body ? (document.body.innerText || '').slice(0, 500).toLowerCase() : '');
+                            if (t.indexOf('just a moment') !== -1 ||
+                                b.indexOf('verify you are human') !== -1 ||
+                                b.indexOf('scrrrr') !== -1 ||
+                                b.indexOf('make sure you\'re a human') !== -1) {
+                                return '$CF_CHALLENGE_MARKER';
+                            }
+                            return ($jsExpr);
+                        })()
+                    """.trimIndent()
+
+                    fun scheduleEval(view: WebView?, delayMs: Long, attempt: Int) {
+                        handler.postDelayed({
+                            if (finished || !cont.isActive) return@postDelayed
+                            try {
+                                view?.evaluateJavascript(wrappedJs) { jsResult ->
+                                    if (finished) return@evaluateJavascript
+                                    val unquoted = unquoteJsResult(jsResult)
+                                    when {
+                                        unquoted == CF_CHALLENGE_MARKER -> {
+                                            Log.w(TAG, "Cloudflare human verification challenge hit on $url")
+                                            try { view.stopLoading() } catch (_: Exception) {}
+                                            finishOnce(null)
+                                        }
+                                        unquoted.isBlank() && attempt < maxPollAttempts -> {
+                                            scheduleEval(view, 350L, attempt + 1)
+                                        }
+                                        else -> {
+                                            finishOnce(unquoted)
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                finishOnce(null)
+                            }
+                        }, delayMs)
                     }
 
                     wv.webViewClient = object : WebViewClient() {
@@ -129,16 +210,8 @@ object GeniusWebViewFetcher {
                         override fun onPageFinished(view: WebView?, loadedUrl: String?) {
                             super.onPageFinished(view, loadedUrl)
                             if (finished) return
-                            handler.postDelayed({
-                                if (finished || !cont.isActive) return@postDelayed
-                                try {
-                                    view?.evaluateJavascript(jsExpr) { jsResult ->
-                                        finishOnce(unquoteJsResult(jsResult))
-                                    }
-                                } catch (e: Exception) {
-                                    finishOnce(null)
-                                }
-                            }, postLoadDelayMs)
+                            handler.removeCallbacksAndMessages(null)
+                            scheduleEval(view, postLoadDelayMs, 0)
                         }
 
                         override fun onReceivedError(
@@ -156,8 +229,9 @@ object GeniusWebViewFetcher {
                     cont.invokeOnCancellation {
                         handler.post {
                             try {
+                                handler.removeCallbacksAndMessages(null)
                                 wv.stopLoading()
-                            } catch (ignored: Exception) {}
+                            } catch (_: Exception) {}
                         }
                     }
 
@@ -172,14 +246,15 @@ object GeniusWebViewFetcher {
     }
 
     suspend fun searchSongs(context: Context, query: String): List<GeniusHit> = mutex.withLock {
-        val encoded = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "https://genius.com/api/search/multi?per_page=8&q=$encoded"
+        val encoded = URLEncoder.encode(query, "UTF-8").replace("+", "%20")
+        val searchUrl = "https://genius.com/api/search/song?per_page=8&q=$encoded"
         val body = loadAndEval(
             context = context,
             url = searchUrl,
             jsExpr = "(function(){ return document.body ? (document.body.innerText || document.body.textContent || '') : ''; })()",
             timeoutMs = 7000L,
-            postLoadDelayMs = 100L
+            postLoadDelayMs = 100L,
+            maxPollAttempts = 1
         ) ?: return emptyList()
 
         val trimmed = body.trim()
@@ -201,10 +276,19 @@ object GeniusWebViewFetcher {
                         if (resType == "song") {
                             val title = result.optString("title", "").trim()
                             val artist = result.optJSONObject("primary_artist")?.optString("name", "")?.trim() ?: ""
+                            val artistNames = result.optString("artist_names", "").trim().ifBlank { artist }
                             val url = result.optString("url", "").trim()
-                            if (title.isNotBlank() && url.startsWith("http")) {
-                                hits.add(GeniusHit(title = title, artist = artist, url = url))
-                            }
+                            if (title.isBlank() || !url.startsWith("http")) continue
+                            if (artist.contains("Genius", ignoreCase = true)) continue
+                            if (!url.endsWith("-lyrics", ignoreCase = true)) continue
+                            hits.add(
+                                GeniusHit(
+                                    title = title,
+                                    artist = artist,
+                                    url = url,
+                                    artistNames = artistNames
+                                )
+                            )
                         }
                     }
                 }
@@ -216,33 +300,13 @@ object GeniusWebViewFetcher {
     }
 
     suspend fun scrapeLyricsFromUrl(context: Context, songUrl: String): String? = mutex.withLock {
-        val jsExtract = """
-            (function() {
-                var containers = document.querySelectorAll('div[data-lyrics-container="true"]');
-                if (!containers || containers.length === 0) {
-                    var legacy = document.querySelector('.lyrics');
-                    return legacy ? (legacy.innerText || '') : '';
-                }
-                var parts = [];
-                for (var i = 0; i < containers.length; i++) {
-                    var clone = containers[i].cloneNode(true);
-                    var junk = clone.querySelectorAll('[data-exclude-from-selection="true"], script, style, button');
-                    for (var j = 0; j < junk.length; j++) {
-                        junk[j].remove();
-                    }
-                    var txt = clone.innerText || clone.textContent || '';
-                    if (txt.trim().length > 0) parts.push(txt.trim());
-                }
-                return parts.join('\n\n');
-            })()
-        """.trimIndent()
-
         val text = loadAndEval(
             context = context,
             url = songUrl,
-            jsExpr = jsExtract,
-            timeoutMs = 9000L,
-            postLoadDelayMs = 350L
+            jsExpr = EXTRACT_LYRICS_JS,
+            timeoutMs = 9500L,
+            postLoadDelayMs = 300L,
+            maxPollAttempts = 4
         )
         return if (!text.isNullOrBlank() && text.length >= 25) text else null
     }

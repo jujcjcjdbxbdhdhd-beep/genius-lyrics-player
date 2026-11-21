@@ -1,10 +1,13 @@
 package com.satulin.geniuslyrics
 
 import android.app.Notification
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSession
+import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.SystemClock
@@ -22,6 +25,7 @@ class MediaNotificationListener : NotificationListenerService() {
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_ARTIST = "extra_artist"
         const val EXTRA_RAW_TITLE = "extra_raw_title"
+        const val EXTRA_ARTIST_FROM_TITLE = "extra_artist_from_title"
         const val EXTRA_PACKAGE = "extra_package"
         const val EXTRA_IS_PLAYING = "extra_is_playing"
         const val EXTRA_POSITION_MS = "extra_position_ms"
@@ -31,11 +35,19 @@ class MediaNotificationListener : NotificationListenerService() {
         var currentTitle: String? = null
         var currentArtist: String? = null
         var currentRawTitle: String? = null
+        var currentArtistFromTitle: Boolean = false
         var currentPackage: String? = null
         var isPlaying: Boolean = false
         var currentPositionMs: Long = 0L
         var currentDurationMs: Long = 0L
         var lastPositionUpdateTime: Long = 0L
+
+        @Volatile
+        private var activeInstance: MediaNotificationListener? = null
+
+        fun refreshActiveTrack() {
+            activeInstance?.scanActiveMedia()
+        }
 
         // Complete Russian & International hip-hop, rap, underground & SoundCloud artist alias dictionary
         val ARTIST_ALIASES: List<Pair<String, String>> = listOf(
@@ -59,7 +71,6 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("бушидо", "Bushido Zho"),
             Pair("163onmyneck", "163ONMYNECK"),
             Pair("онмайнек", "163ONMYNECK"),
-            Pair("163", "163ONMYNECK"),
             Pair("gone.fludd", "GONE.Fludd"),
             Pair("gone fludd", "GONE.Fludd"),
             Pair("гон флад", "GONE.Fludd"),
@@ -117,10 +128,86 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("lil krystall", "LIL KRYSTALL"),
             Pair("серега пират", "Серега Пират"),
             Pair("serega pirat", "Серега Пират"),
+            Pair("лил драгхилл", "LILDRUGHILL"),
+            Pair("лил морти", "LIL MORTY"),
+            Pair("lil morty", "LIL MORTY"),
+            Pair("fortuna 812", "fortuna 812"),
+            Pair("фортуна 812", "fortuna 812"),
+            Pair("темный принц", "темный принц"),
+            Pair("слава кпсс", "Слава КПСС"),
+            Pair("пошлая молли", "Пошлая Молли"),
+            Pair("dead blonde", "DEAD BLONDE"),
+            Pair("король и шут", "Король и Шут"),
+            Pair("homixide gang", "Homixide Gang"),
+            Pair("lil peep", "Lil Peep"),
+            Pair("лил пип", "Lil Peep"),
+            Pair("night lovell", "Night Lovell"),
+            Pair("21 savage", "21 Savage"),
+            Pair("young thug", "Young Thug"),
+            Pair("lil baby", "Lil Baby"),
+            Pair("a\$ap rocky", "A\$AP Rocky"),
+            Pair("asap rocky", "A\$AP Rocky"),
+            Pair("асап роки", "A\$AP Rocky"),
+            Pair("the weeknd", "The Weeknd"),
+            Pair("kendrick lamar", "Kendrick Lamar"),
+            Pair("кендрик ламар", "Kendrick Lamar"),
+            Pair("trippie redd", "Trippie Redd"),
+            Pair("pop smoke", "Pop Smoke"),
             // Single-word aliases
             Pair("рокет", "ROCKET"),
             Pair("рокета", "ROCKET"),
             Pair("rocket", "ROCKET"),
+            Pair("лилдрагхилл", "LILDRUGHILL"),
+            Pair("lildrughill", "LILDRUGHILL"),
+            Pair("фреско", "FRESCO"),
+            Pair("fresco", "FRESCO"),
+            Pair("глоки52", "GLOCKI52"),
+            Pair("glocki52", "GLOCKI52"),
+            Pair("бато", "BATO"),
+            Pair("bato", "BATO"),
+            Pair("янгвей", "YUNGWAY"),
+            Pair("yungway", "YUNGWAY"),
+            Pair("эляплаг", "elyaplugg!"),
+            Pair("elyaplugg!", "elyaplugg!"),
+            Pair("elyaplugg", "elyaplugg!"),
+            Pair("фортуна", "fortuna 812"),
+            Pair("мадкид", "madk1d"),
+            Pair("мэдкид", "madk1d"),
+            Pair("madk1d", "madk1d"),
+            Pair("пирокинезис", "pyrokinesis"),
+            Pair("pyrokinesis", "pyrokinesis"),
+            Pair("оксимирон", "Oxxxymiron"),
+            Pair("окси", "Oxxxymiron"),
+            Pair("oxxxymiron", "Oxxxymiron"),
+            Pair("кишлак", "Кишлак"),
+            Pair("kishlak", "Кишлак"),
+            Pair("лида", "Lida"),
+            Pair("lida", "Lida"),
+            Pair("cmh", "CMH"),
+            Pair("dk", "DK"),
+            Pair("мазеллов", "MZLFF"),
+            Pair("mzlff", "MZLFF"),
+            Pair("gspd", "GSPD"),
+            Pair("нервы", "Нервы"),
+            Pair("кино", "Кино"),
+            Pair("цой", "Кино"),
+            Pair("киш", "Король и Шут"),
+            Pair("xxxtentacion", "XXXTENTACION"),
+            Pair("\$uicideboy\$", "\$uicideboy\$"),
+            Pair("суисайдбойс", "\$uicideboy\$"),
+            Pair("suicideboys", "\$uicideboy\$"),
+            Pair("боунс", "Bones"),
+            Pair("bones", "Bones"),
+            Pair("гостмейн", "Ghostemane"),
+            Pair("ghostemane", "Ghostemane"),
+            Pair("викенд", "The Weeknd"),
+            Pair("эминем", "Eminem"),
+            Pair("eminem", "Eminem"),
+            Pair("osamason", "OsamaSon"),
+            Pair("nettspend", "Nettspend"),
+            Pair("summrs", "Summrs"),
+            Pair("kankan", "Kankan"),
+            Pair("sofaygo", "SoFaygo"),
             Pair("тейп", "Big Baby Tape"),
             Pair("тейпа", "Big Baby Tape"),
             Pair("буда", "OG Buda"),
@@ -165,11 +252,11 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("скриптонит", "Скриптонит"),
             Pair("скрип", "Скриптонит"),
             Pair("skryptonite", "Скриптонит"),
-            Pair("токсис", "TOXI$"),
-            Pair("токсик", "TOXI$"),
-            Pair("токса", "TOXI$"),
-            Pair("toxi$", "TOXI$"),
-            Pair("toxis", "TOXI$"),
+            Pair("токсис", "TOXI\$"),
+            Pair("токсик", "TOXI\$"),
+            Pair("токса", "TOXI\$"),
+            Pair("toxi\$", "TOXI\$"),
+            Pair("toxis", "TOXI\$"),
             Pair("ловв66", "LOVV66"),
             Pair("лов66", "LOVV66"),
             Pair("lovv66", "LOVV66"),
@@ -210,7 +297,6 @@ class MediaNotificationListener : NotificationListenerService() {
             Pair("карти", "Playboi Carti"),
             Pair("carti", "Playboi Carti"),
             Pair("йит", "Yeat"),
-            Pair("ит", "Yeat"),
             Pair("yeat", "Yeat"),
             Pair("дрейк", "Drake"),
             Pair("drake", "Drake"),
@@ -273,15 +359,17 @@ class MediaNotificationListener : NotificationListenerService() {
 
             // Strip decorative emojis & symbols commonly spammed on SoundCloud
             s = stripEmojis(s)
-            // Strip noise in square / CJK brackets [slowed], 【SLOWED】, [prod. ...], [remastered], etc.
-            s = s.replace(Regex("[\\[【『][^\\]】』]*?(?:slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tiktok|new)[^\\]】』]*?[\\]】』]", RegexOption.IGNORE_CASE), "")
-            // Strip noise in parentheses (slowed + reverb), (prod. by ...), (Explicit), etc.
-            s = s.replace(Regex("\\([^)]*?(?:slowed|reverb|speed|sped|bass|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tiktok|new)[^)]*?\\)", RegexOption.IGNORE_CASE), "")
+            // Strip noise in square / CJK brackets [slowed], 【SLOWED】, [prod. ...], [слив], etc.
+            s = s.replace(Regex("[\\[【『][^\\]】』]*?(?:slowed|reverb|speed|sped\\s*up|sped|bass\\s*boosted|bass|boosted|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics?|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tik\\s*tok|new|слив|сниппет|отрывок|полная|ремикс|замедленная|ускоренная|оригинал|басс|премьера|новинка|visualizer|dir\\.|p\\.|8d)[^\\]】』]*?[\\]】』]", RegexOption.IGNORE_CASE), "")
+            // Strip noise in parentheses (slowed + reverb), (prod. by ...), (Explicit), (слив), etc.
+            s = s.replace(Regex("\\([^)]*?(?:slowed|reverb|speed|sped\\s*up|sped|bass\\s*boosted|bass|boosted|prod|feat|ft|remix|edit|nightcore|official|hq|audio|video|clip|клип|текст|lyrics?|leak|snippet|exclusive|loop|hour|bonus|demo|unreleased|live|acoustic|instrumental|remaster|explicit|clean|deluxe|tik\\s*tok|new|слив|сниппет|отрывок|полная|ремикс|замедленная|ускоренная|оригинал|басс|премьера|новинка|visualizer|dir\\.|p\\.|8d)[^)]*?\\)", RegexOption.IGNORE_CASE), "")
+            // Strip standalone 4-digit year tags like [2024] or (2023) without touching phone numbers like (952)
+            s = s.replace(Regex("[\\[\\(]\\s*(?:19|20)\\d{2}\\s*[\\]\\)]"), "")
             // Strip trailing "prod. by ...", "produced by ...", "beat by ...", "ft. ...", "feat. ..."
             // NOTE: intentionally does NOT strip bare "by" so songs like "Stand By Me" or "Drive By" stay intact!
             s = s.replace(Regex("\\b(?:prod\\.?\\s*by|produced\\s+by|prod\\.|beat\\s+by|feat\\.|ft\\.)\\s+.*$", RegexOption.IGNORE_CASE), "")
             // Strip *NEW* / ~LEAK~ tags
-            s = s.replace(Regex("[*~]\\s*(?:new|leak|exclusive|snippet|slowed|hq)\\s*[*~]", RegexOption.IGNORE_CASE), "")
+            s = s.replace(Regex("[*~]\\s*(?:new|leak|exclusive|snippet|slowed|hq|слив)\\s*[*~]", RegexOption.IGNORE_CASE), "")
             // Strip file extensions .mp3, .wav, .flac
             s = s.replace(Regex("\\.(mp3|wav|flac|m4a)$", RegexOption.IGNORE_CASE), "")
             // Strip quotes
@@ -290,6 +378,46 @@ class MediaNotificationListener : NotificationListenerService() {
             s = s.replace(Regex("\\s+"), " ")
 
             return s.trim()
+        }
+
+        fun isLikelyFakeUploader(artist: String): Boolean {
+            val clean = sanitizeText(artist)
+            if (clean.isBlank()) return false
+            if (findKnownArtist(clean) != null) return false
+            val lower = clean.lowercase().replace('ё', 'е')
+            val fakeKeywords = listOf(
+                "sliv", "слив", "archive", "архив", "reupload", "slowed", "reverb",
+                "nightcore", "beats", "channel", "музыка", "треки", "soundcloud",
+                "audio_", "music_", "mp3", "prod_"
+            )
+            if (fakeKeywords.any { lower.contains(it) }) return true
+            if (lower.contains('_') && lower.any { it.isDigit() }) return true
+            return false
+        }
+
+        fun buildGeniusSearchQuery(
+            artist: String,
+            title: String,
+            rawTitle: String = "",
+            artistFromTitle: Boolean = false
+        ): String {
+            val cleanArtist = canonicalizeArtist(
+                sanitizeText(artist)
+                    .replace(Regex("\\b(?:feat\\.?|ft\\.)\\b.*$", RegexOption.IGNORE_CASE), "")
+                    .trim()
+            )
+            val cleanTitle = stripNoise(title).ifBlank { sanitizeText(title) }
+            val cleanRaw = stripNoise(rawTitle).ifBlank { sanitizeText(rawTitle) }
+
+            if (cleanArtist.isNotBlank() && cleanTitle.isNotBlank()) {
+                return if (artistFromTitle || !isLikelyFakeUploader(cleanArtist)) {
+                    "$cleanArtist $cleanTitle"
+                } else {
+                    cleanTitle
+                }
+            }
+            if (cleanTitle.isNotBlank()) return cleanTitle
+            return cleanRaw
         }
 
         fun findKnownArtist(s: String?): String? {
@@ -436,6 +564,8 @@ class MediaNotificationListener : NotificationListenerService() {
     }
 
     private var activeMediaController: MediaController? = null
+    private var activeSessionToken: MediaSession.Token? = null
+    private var mediaSessionManager: MediaSessionManager? = null
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
@@ -443,18 +573,129 @@ class MediaNotificationListener : NotificationListenerService() {
         }
 
         override fun onMetadataChanged(metadata: MediaMetadata?) {
-            metadata?.let { updateMetadata(it) }
+            metadata?.let { updateMetadata(it, resetPositionOnTrackChange = true) }
         }
+    }
+
+    private val sessionsChangedListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+        handleActiveSessions(controllers)
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        activeInstance = this
+        try {
+            val mgr = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+            mediaSessionManager = mgr
+            mgr?.addOnActiveSessionsChangedListener(
+                sessionsChangedListener,
+                ComponentName(this, MediaNotificationListener::class.java)
+            )
+        } catch (e: SecurityException) {
+            Log.w(TAG, "No security access to MediaSessionManager: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "MediaSessionManager init error: ${e.message}")
+        }
+        scanActiveMedia()
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        cleanupMediaListeners()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cleanupMediaListeners()
+    }
+
+    private fun cleanupMediaListeners() {
+        activeInstance = null
+        try {
+            activeMediaController?.unregisterCallback(mediaControllerCallback)
+        } catch (_: Exception) {}
+        activeMediaController = null
+        activeSessionToken = null
+        try {
+            mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
+        } catch (_: Exception) {}
+        mediaSessionManager = null
+    }
+
+    fun scanActiveMedia() {
+        try {
+            val mgr = mediaSessionManager ?: (getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager)
+            if (mgr != null) {
+                val controllers = mgr.getActiveSessions(ComponentName(this, MediaNotificationListener::class.java))
+                if (handleActiveSessions(controllers)) {
+                    return
+                }
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Cannot query active sessions: ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "scanActiveMedia sessions error: ${e.message}")
+        }
+
+        try {
+            val notifs = activeNotifications ?: return
+            val ordered = notifs.sortedByDescending { isNotificationPlaying(it.notification) }
+            for (sbn in ordered) {
+                if (sbn.notification.isMediaNotification() || isKnownMusicApp(sbn.packageName)) {
+                    inspectNotification(sbn)
+                    if (!currentTitle.isNullOrBlank()) break
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "scanActiveMedia notifications error: ${e.message}")
+        }
+    }
+
+    private fun handleActiveSessions(controllers: List<MediaController>?): Boolean {
+        if (controllers.isNullOrEmpty()) return false
+        val preferred = controllers.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
+        } ?: controllers.firstOrNull {
+            val t = sanitizeText(it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE))
+            t.isNotBlank()
+        } ?: return false
+
+        bindController(preferred, preferred.packageName)
+        return true
+    }
+
+    private fun bindController(controller: MediaController, pkg: String?): Boolean {
+        try {
+            val token = controller.sessionToken
+            if (token != activeSessionToken || activeMediaController == null) {
+                try {
+                    activeMediaController?.unregisterCallback(mediaControllerCallback)
+                } catch (_: Exception) {}
+                controller.registerCallback(mediaControllerCallback)
+                activeMediaController = controller
+                activeSessionToken = token
+            }
+            if (!pkg.isNullOrBlank()) {
+                currentPackage = pkg
+            }
+            controller.playbackState?.let { updatePlaybackState(it) }
+            val meta = controller.metadata
+            if (meta != null) {
+                val metaTitle = sanitizeText(meta.getString(MediaMetadata.METADATA_KEY_TITLE))
+                if (metaTitle.isNotBlank()) {
+                    updateMetadata(meta, resetPositionOnTrackChange = false)
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not bind MediaController: ${e.message}")
+        }
+        return false
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         sbn?.let { inspectNotification(it) }
-    }
-
-    override fun onNotificationRankingUpdate(rankingMap: RankingMap?) {
-        super.onNotificationRankingUpdate(rankingMap)
-        activeNotifications?.forEach { inspectNotification(it) }
     }
 
     private fun inspectNotification(sbn: StatusBarNotification) {
@@ -473,17 +714,26 @@ class MediaNotificationListener : NotificationListenerService() {
             return
         }
 
-        if (mediaSessionToken != null) {
-            try {
-                activeMediaController?.unregisterCallback(mediaControllerCallback)
-                val controller = MediaController(this, mediaSessionToken)
-                controller.registerCallback(mediaControllerCallback)
-                activeMediaController = controller
+        val playing = isNotificationPlaying(notification)
+        // Do not let a paused/background notification from another app hijack a currently playing session
+        val activePlaying = activeMediaController?.playbackState?.state == PlaybackState.STATE_PLAYING
+        val activePkg = currentPackage ?: activeMediaController?.packageName
+        if (activePlaying && !playing && !activePkg.isNullOrBlank() && sbn.packageName != activePkg) {
+            return
+        }
 
-                controller.metadata?.let { updateMetadata(it) }
-                controller.playbackState?.let { updatePlaybackState(it) }
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not bind MediaController: ${e.message}")
+        if (mediaSessionToken != null) {
+            if (mediaSessionToken != activeSessionToken || activeMediaController == null) {
+                val handled = bindController(MediaController(this, mediaSessionToken), sbn.packageName)
+                if (handled) return
+            } else {
+                val controller = activeMediaController
+                val meta = controller?.metadata
+                if (meta != null && sanitizeText(meta.getString(MediaMetadata.METADATA_KEY_TITLE)).isNotBlank()) {
+                    controller.playbackState?.let { updatePlaybackState(it) }
+                    updateMetadata(meta, resetPositionOnTrackChange = false)
+                    return
+                }
             }
         }
 
@@ -495,15 +745,22 @@ class MediaNotificationListener : NotificationListenerService() {
 
         val pkg = sbn.packageName
         val parsed = parseTrack(rawTitle, rawArtist)
-        val playing = isNotificationPlaying(notification)
+        val trackChanged = parsed.title != currentTitle || parsed.artist != currentArtist
 
-        if (parsed.title == currentTitle && parsed.artist == currentArtist && playing == isPlaying) {
+        if (!trackChanged && playing == isPlaying) {
             return
+        }
+
+        if (trackChanged) {
+            currentPositionMs = 0L
+            currentDurationMs = 0L
+            lastPositionUpdateTime = SystemClock.elapsedRealtime()
         }
 
         currentTitle = parsed.title
         currentArtist = parsed.artist
         currentRawTitle = rawTitle
+        currentArtistFromTitle = parsed.artistFromTitle
         currentPackage = pkg
         isPlaying = playing
 
@@ -513,6 +770,7 @@ class MediaNotificationListener : NotificationListenerService() {
             putExtra(EXTRA_TITLE, parsed.title)
             putExtra(EXTRA_ARTIST, parsed.artist)
             putExtra(EXTRA_RAW_TITLE, rawTitle)
+            putExtra(EXTRA_ARTIST_FROM_TITLE, parsed.artistFromTitle)
             putExtra(EXTRA_PACKAGE, pkg)
             putExtra(EXTRA_IS_PLAYING, playing)
             putExtra(EXTRA_POSITION_MS, currentPositionMs)
@@ -523,7 +781,7 @@ class MediaNotificationListener : NotificationListenerService() {
         sendBroadcast(intent)
     }
 
-    private fun updateMetadata(metadata: MediaMetadata) {
+    private fun updateMetadata(metadata: MediaMetadata, resetPositionOnTrackChange: Boolean = false) {
         val title = sanitizeText(metadata.getString(MediaMetadata.METADATA_KEY_TITLE))
         val artist = sanitizeText(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST))
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
@@ -535,14 +793,23 @@ class MediaNotificationListener : NotificationListenerService() {
         if (title.isNotBlank()) {
             val parsed = parseTrack(title, artist)
             if (parsed.title != currentTitle || parsed.artist != currentArtist) {
+                if (resetPositionOnTrackChange) {
+                    currentPositionMs = 0L
+                    lastPositionUpdateTime = SystemClock.elapsedRealtime()
+                }
+                if (duration <= 0) {
+                    currentDurationMs = 0L
+                }
                 currentTitle = parsed.title
                 currentArtist = parsed.artist
                 currentRawTitle = title
+                currentArtistFromTitle = parsed.artistFromTitle
 
                 val intent = Intent(ACTION_TRACK_CHANGED).apply {
                     putExtra(EXTRA_TITLE, parsed.title)
                     putExtra(EXTRA_ARTIST, parsed.artist)
                     putExtra(EXTRA_RAW_TITLE, title)
+                    putExtra(EXTRA_ARTIST_FROM_TITLE, parsed.artistFromTitle)
                     putExtra(EXTRA_PACKAGE, currentPackage ?: "")
                     putExtra(EXTRA_IS_PLAYING, isPlaying)
                     putExtra(EXTRA_POSITION_MS, currentPositionMs)
@@ -567,6 +834,7 @@ class MediaNotificationListener : NotificationListenerService() {
         val intent = Intent(ACTION_PLAYBACK_STATE).apply {
             putExtra(EXTRA_IS_PLAYING, playing)
             putExtra(EXTRA_POSITION_MS, position)
+            putExtra(EXTRA_DURATION_MS, currentDurationMs)
             putExtra(EXTRA_UPDATED_AT, updatedAt)
             setPackage(applicationContext.packageName)
         }

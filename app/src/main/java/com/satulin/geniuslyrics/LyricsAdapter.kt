@@ -1,5 +1,6 @@
 package com.satulin.geniuslyrics
 
+import android.animation.ValueAnimator
 import android.graphics.Color
 import android.graphics.Typeface
 import android.view.LayoutInflater
@@ -7,6 +8,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+
+private const val PAYLOAD_ACTIVE = "payload_active"
+
+private val COLOR_HEADER = Color.parseColor("#1DB954")
+private val COLOR_ACTIVE = Color.parseColor("#FFFFFF")
+private val COLOR_UPCOMING = Color.parseColor("#B3B8BE")
+private val COLOR_PAST = Color.parseColor("#5E6368")
 
 class LyricsAdapter(
     private var lines: List<LyricLine> = emptyList(),
@@ -16,9 +24,20 @@ class LyricsAdapter(
     var activeLineIndex: Int = -1
         set(value) {
             val prev = field
+            if (prev == value) return
             field = value
-            if (prev != -1) notifyItemChanged(prev)
-            if (value != -1) notifyItemChanged(value)
+            if (lines.isEmpty()) return
+            val start = when {
+                prev < 0 -> 0
+                value < 0 -> 0
+                else -> minOf(prev, value)
+            }.coerceIn(0, lines.lastIndex)
+            val end = when {
+                prev < 0 -> value
+                value < 0 -> prev
+                else -> maxOf(prev, value)
+            }.coerceIn(start, lines.lastIndex)
+            notifyItemRangeChanged(start, end - start + 1, PAYLOAD_ACTIVE)
         }
 
     var fontSizeSp: Float = 20f
@@ -41,9 +60,25 @@ class LyricsAdapter(
 
     override fun onBindViewHolder(holder: LyricViewHolder, position: Int) {
         val line = lines[position]
-        holder.bind(line, position == activeLineIndex, fontSizeSp)
+        holder.bind(line, position, activeLineIndex, fontSizeSp, animateColor = false)
         holder.itemView.setOnClickListener {
-            onLineClicked(position)
+            val idx = holder.adapterPosition
+            if (idx != RecyclerView.NO_POSITION) {
+                onLineClicked(idx)
+            }
+        }
+    }
+
+    override fun onBindViewHolder(
+        holder: LyricViewHolder,
+        position: Int,
+        payloads: MutableList<Any>
+    ) {
+        if (payloads.contains(PAYLOAD_ACTIVE)) {
+            val line = lines[position]
+            holder.applyState(line, position, activeLineIndex, fontSizeSp, animateColor = true)
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
         }
     }
 
@@ -52,40 +87,78 @@ class LyricsAdapter(
     class LyricViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val tvLine: TextView = itemView.findViewById(R.id.tvLyricLine)
         private val viewIndicator: View = itemView.findViewById(R.id.viewIndicator)
+        private var colorAnimator: ValueAnimator? = null
+        private var currentColor: Int = COLOR_UPCOMING
 
-        fun bind(line: LyricLine, isActive: Boolean, fontSize: Float) {
-            val trimmed = line.text.trim()
-            val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
-
+        fun bind(
+            line: LyricLine,
+            position: Int,
+            activeIndex: Int,
+            fontSize: Float,
+            animateColor: Boolean
+        ) {
             tvLine.text = line.text
-            // 100% crisp vector rendering: never scale view, keep alpha 1.0f (NO BLUR!)
+            // 100% crisp vector rendering: zero view scaling, zero blur!
             tvLine.alpha = 1.0f
             itemView.scaleX = 1.0f
             itemView.scaleY = 1.0f
             itemView.translationX = 0f
+            tvLine.setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
 
+            applyState(line, position, activeIndex, fontSize, animateColor)
+        }
+
+        fun applyState(
+            line: LyricLine,
+            position: Int,
+            activeIndex: Int,
+            fontSize: Float,
+            animateColor: Boolean
+        ) {
+            val trimmed = line.text.trim()
+            val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
+            val isActive = position == activeIndex
+            val isPast = activeIndex >= 0 && position < activeIndex
+
+            val targetColor: Int
             when {
                 isHeader -> {
-                    // Spotify section tags: [Интро], [Припев], [Куплет] in subtle Spotify green
                     viewIndicator.visibility = View.INVISIBLE
-                    tvLine.textSize = (fontSize - 4f).coerceAtLeast(13f)
-                    tvLine.setTextColor(Color.parseColor("#1DB954"))
-                    tvLine.setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
+                    tvLine.textSize = (fontSize - 5f).coerceAtLeast(12f)
+                    targetColor = COLOR_HEADER
                 }
                 isActive -> {
-                    // Spotify active sung line: 100% brilliant white, larger, bold, Spotify green pill
                     viewIndicator.visibility = View.VISIBLE
-                    tvLine.textSize = fontSize + 2f
-                    tvLine.setTextColor(Color.parseColor("#FFFFFF"))
-                    tvLine.setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
+                    tvLine.textSize = fontSize + 2.5f
+                    targetColor = COLOR_ACTIVE
                 }
-                else -> {
-                    // Spotify inactive line: crisp, razor-sharp Spotify grey, 100% alpha (zero blur!)
+                isPast -> {
                     viewIndicator.visibility = View.INVISIBLE
                     tvLine.textSize = fontSize
-                    tvLine.setTextColor(Color.parseColor("#72777D"))
-                    tvLine.setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
+                    targetColor = COLOR_PAST
                 }
+                else -> {
+                    viewIndicator.visibility = View.INVISIBLE
+                    tvLine.textSize = fontSize
+                    targetColor = COLOR_UPCOMING
+                }
+            }
+
+            colorAnimator?.cancel()
+            if (animateColor && currentColor != targetColor) {
+                val startColor = currentColor
+                colorAnimator = ValueAnimator.ofArgb(startColor, targetColor).apply {
+                    duration = 220L
+                    addUpdateListener { anim ->
+                        val c = anim.animatedValue as Int
+                        currentColor = c
+                        tvLine.setTextColor(c)
+                    }
+                    start()
+                }
+            } else {
+                currentColor = targetColor
+                tvLine.setTextColor(targetColor)
             }
         }
     }

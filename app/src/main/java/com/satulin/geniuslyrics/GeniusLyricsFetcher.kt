@@ -2,6 +2,7 @@ package com.satulin.geniuslyrics
 
 import android.content.Context
 import android.util.Log
+import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -27,15 +28,16 @@ data class LyricsResult(
     val plainLyrics: String,
     val sourceUrl: String = "",
     val isSynced: Boolean = false,
-    val sourceName: String = "Spotify"
+    val sourceName: String = "Spotify",
+    val geniusUrl: String = ""
 )
 
 object GeniusLyricsFetcher {
 
     private const val TAG = "GeniusLyricsFetcher"
-    private const val CACHE_VERSION = "v3_"
+    private const val CACHE_VERSION = "v5_"
     private const val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -44,6 +46,9 @@ object GeniusLyricsFetcher {
         .build()
 
     private val memoryCache = mutableMapOf<String, LyricsResult>()
+
+    @Volatile
+    private var oldCachesCleaned = false
 
     private val RU_TO_LAT = mapOf(
         'а' to "a", 'б' to "b", 'в' to "v", 'г' to "g", 'д' to "d", 'е' to "e", 'ё' to "e",
@@ -73,8 +78,14 @@ object GeniusLyricsFetcher {
         "5 звёзд" to "5ive",
         "пять звезд" to "5ive",
         "5ive" to "5ive",
-        "динамит" to "dynamite"
+        "динамит" to "dynamite",
+        "пули" to "bullets"
     )
+
+    private val REGION_TAG_TOKENS = setOf("rus", "ru", "uk", "us", "usa", "de", "fr", "ua", "kz", "by")
+    private val CYRILLIC_REGEX = Regex("[а-яА-ЯёЁ]")
+    private val PAREN_BRACKET_REGEX = Regex("\\s*[\\(\\[]([^\\)\\]]*)[\\)\\]]")
+    private val ARTIST_SPLIT_REGEX = Regex("\\s+(?:и|with|and|x)\\s+|[,&/×]|\\b(?:ft\\.?|feat\\.?|featuring)\\b", RegexOption.IGNORE_CASE)
 
     data class ResolvedTrack(
         val artist: String,
@@ -128,16 +139,50 @@ object GeniusLyricsFetcher {
         return s
     }
 
-    fun isTitleMatch(expectedTitle: String, candidateTitle: String): Boolean {
-        val cleanExp = cleanTitleForComparison(expectedTitle)
-        val cleanCand = cleanTitleForComparison(candidateTitle)
-        val exp = normalizeForMatch(cleanExp)
-        val cand = normalizeForMatch(cleanCand)
+    private fun extractTitleVariants(t: String): List<String> {
+        val base = cleanTitleForComparison(t)
+        if (base.isBlank()) return emptyList()
+
+        val variants = linkedSetOf<String>()
+        variants.add(base)
+
+        val noParens = base.replace(PAREN_BRACKET_REGEX, "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (noParens.isNotBlank()) {
+            variants.add(noParens)
+        }
+
+        // Extract bilingual/translation groups like "(Bullets)" or "(In the Dark)" from Genius titles
+        for (m in PAREN_BRACKET_REGEX.findAll(base)) {
+            val inside = m.groupValues[1].trim()
+            if (inside.length >= 2 &&
+                !inside.equals("remix", ignoreCase = true) &&
+                !inside.equals("bonus", ignoreCase = true) &&
+                !inside.equals("intro", ignoreCase = true) &&
+                !inside.equals("outro", ignoreCase = true) &&
+                !inside.equals("skit", ignoreCase = true)
+            ) {
+                variants.add(inside)
+            }
+        }
+
+        val transBase = transliterateTitleWords(base)
+        if (transBase.isNotBlank()) variants.add(transBase)
+        if (noParens.isNotBlank()) {
+            val transNoParens = transliterateTitleWords(noParens)
+            if (transNoParens.isNotBlank()) variants.add(transNoParens)
+        }
+
+        return variants.toList()
+    }
+
+    private fun isSingleVariantTitleMatch(expRaw: String, candRaw: String): Boolean {
+        val exp = normalizeForMatch(expRaw)
+        val cand = normalizeForMatch(candRaw)
         if (exp.isBlank() || cand.isBlank()) return false
         if (exp == cand) return true
 
-        // Substring match ONLY if the shorter string covers >= 70% of the longer
-        // This prevents "home" matching "homesick", "drive" matching "driven away", etc.
         val minLen = minOf(exp.length, cand.length)
         val maxLen = maxOf(exp.length, cand.length)
         if (minLen >= 3 && (cand.contains(exp) || exp.contains(cand))) {
@@ -145,8 +190,8 @@ object GeniusLyricsFetcher {
             if (coverage >= 0.70) return true
         }
 
-        val pExp = phoneticKey(cleanExp)
-        val pCand = phoneticKey(cleanCand)
+        val pExp = phoneticKey(expRaw)
+        val pCand = phoneticKey(candRaw)
         if (pExp.isNotBlank() && pCand.isNotBlank()) {
             if (pExp == pCand) return true
             val pMinLen = minOf(pExp.length, pCand.length)
@@ -159,53 +204,248 @@ object GeniusLyricsFetcher {
         return false
     }
 
-    fun isArtistMatch(expectedArtist: String, candidateArtist: String): Boolean {
-        if (expectedArtist.isBlank()) return true
-        val canonExp = MediaNotificationListener.canonicalizeArtist(expectedArtist)
-        val canonCand = MediaNotificationListener.canonicalizeArtist(candidateArtist)
-        val exp = normalizeForMatch(canonExp)
-        val cand = normalizeForMatch(canonCand)
-        if (exp.isBlank() || cand.isBlank()) return false
-        if (exp == cand) return true
-        val minLen = minOf(exp.length, cand.length)
-        if (minLen >= 3 && (cand.contains(exp) || exp.contains(cand))) return true
+    fun isTitleMatch(expectedTitle: String, candidateTitle: String): Boolean {
+        val expVars = extractTitleVariants(expectedTitle)
+        val candVars = extractTitleVariants(candidateTitle)
+        if (expVars.isEmpty() || candVars.isEmpty()) return false
 
-        val pExp = phoneticKey(canonExp)
-        val pCand = phoneticKey(canonCand)
-        if (pExp.isNotBlank() && pCand.isNotBlank()) {
-            if (pExp == pCand) return true
-            val pMin = minOf(pExp.length, pCand.length)
-            if (pMin >= 3 && (pCand.contains(pExp) || pExp.contains(pCand))) return true
+        for (ev in expVars) {
+            for (cv in candVars) {
+                if (isSingleVariantTitleMatch(ev, cv)) return true
+            }
         }
         return false
     }
 
-    private fun pickBestResult(results: List<LyricsResult?>, expectedTitle: String = "", expectedArtist: String = ""): LyricsResult? {
+    /**
+     * Checks whether the expected title words appear as a clean leading prefix of the candidate title
+     * (after stripping parentheticals), used ONLY when artist identity has already been strictly verified.
+     */
+    fun isTitleWordPrefixMatch(expectedTitle: String, candidateTitle: String): Boolean {
+        val expClean = cleanTitleForComparison(expectedTitle)
+            .replace(PAREN_BRACKET_REGEX, "")
+            .lowercase()
+            .replace('ё', 'е')
+            .replace(Regex("[^a-z0-9а-я\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        val candClean = cleanTitleForComparison(candidateTitle)
+            .replace(PAREN_BRACKET_REGEX, "")
+            .lowercase()
+            .replace('ё', 'е')
+            .replace(Regex("[^a-z0-9а-я\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (expClean.length < 4 || candClean.isBlank()) return false
+        return candClean == expClean || candClean.startsWith("$expClean ")
+    }
+
+    private fun extractArtistTokens(raw: String): List<String> {
+        val clean = MediaNotificationListener.sanitizeText(raw)
+        if (clean.isBlank()) return emptyList()
+
+        val tokens = linkedSetOf<String>()
+        val parts = clean.split(ARTIST_SPLIT_REGEX)
+        for (part in parts) {
+            val trimmed = part.trim()
+            if (trimmed.isBlank()) continue
+            tokens.add(trimmed)
+
+            val outside = trimmed.replace(PAREN_BRACKET_REGEX, " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            if (outside.isNotBlank()) {
+                tokens.add(outside)
+                tokens.add(MediaNotificationListener.canonicalizeArtist(outside))
+            }
+
+            for (m in PAREN_BRACKET_REGEX.findAll(trimmed)) {
+                val inside = m.groupValues[1].trim()
+                val cleanedInside = inside.replace(Regex("^(?:ft\\.?|feat\\.?)\\s+", RegexOption.IGNORE_CASE), "").trim()
+                if (cleanedInside.isNotBlank()) {
+                    for (sub in cleanedInside.split(ARTIST_SPLIT_REGEX)) {
+                        val subTrim = sub.trim()
+                        val subNorm = normalizeForMatch(subTrim)
+                        if (subNorm.length >= 2 && subNorm !in REGION_TAG_TOKENS) {
+                            tokens.add(subTrim)
+                            tokens.add(MediaNotificationListener.canonicalizeArtist(subTrim))
+                        }
+                    }
+                }
+            }
+            tokens.add(MediaNotificationListener.canonicalizeArtist(trimmed))
+        }
+        return tokens.filter { normalizeForMatch(it).length >= 2 }
+    }
+
+    fun isArtistMatch(expectedArtist: String, candidateArtist: String): Boolean {
+        if (expectedArtist.isBlank()) return true
+        val expTokens = extractArtistTokens(expectedArtist)
+        val candTokens = extractArtistTokens(candidateArtist)
+        if (expTokens.isEmpty() || candTokens.isEmpty()) return false
+
+        for (et in expTokens) {
+            val exp = normalizeForMatch(et)
+            val pExp = phoneticKey(et)
+            if (exp.isBlank()) continue
+
+            for (ct in candTokens) {
+                val cand = normalizeForMatch(ct)
+                if (cand.isBlank()) continue
+                if (exp == cand) return true
+
+                val minLen = minOf(exp.length, cand.length)
+                val maxLen = maxOf(exp.length, cand.length)
+                if (minLen >= 3 && (cand.contains(exp) || exp.contains(cand))) {
+                    if (minLen.toDouble() / maxLen.toDouble() >= 0.70) return true
+                }
+
+                val pCand = phoneticKey(ct)
+                if (pExp.isNotBlank() && pCand.isNotBlank()) {
+                    if (pExp == pCand) return true
+                    val pMin = minOf(pExp.length, pCand.length)
+                    val pMax = maxOf(pExp.length, pCand.length)
+                    if (pMin >= 4 && (pCand.contains(pExp) || pExp.contains(pCand))) {
+                        if (pMin.toDouble() / pMax.toDouble() >= 0.70) return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    fun estimateLineTimestamps(lines: List<LyricLine>, durationMs: Long): List<LyricLine> {
+        if (lines.isEmpty() || durationMs <= 10_000L) return lines
+        val introMs = (durationMs * 0.04).toLong().coerceIn(2000L, 8000L)
+        val outroMs = (durationMs * 0.05).toLong().coerceIn(2000L, 10000L)
+        val activeWindow = (durationMs - introMs - outroMs).coerceAtLeast(5000L)
+
+        val weights = lines.map { line ->
+            val trimmed = line.text.trim()
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                2.0
+            } else {
+                trimmed.length.coerceIn(6, 60).toDouble()
+            }
+        }
+        val totalWeight = weights.sum().coerceAtLeast(1.0)
+        var cumulative = 0.0
+        return lines.mapIndexed { idx, line ->
+            val ts = (introMs + (cumulative / totalWeight * activeWindow).toLong())
+                .coerceIn(0L, durationMs)
+            cumulative += weights[idx]
+            line.copy(timeMs = ts)
+        }
+    }
+
+    private fun pickBestResult(
+        results: List<LyricsResult?>,
+        expectedTitle: String = "",
+        expectedArtist: String = "",
+        requireArtistMatch: Boolean = false
+    ): LyricsResult? {
         val valid = results.filterNotNull().filter { it.lines.isNotEmpty() }
         if (valid.isEmpty()) return null
 
-        // Extra-strict filter: if we have an expectedTitle, reject results whose title doesn't match at all
-        val strictValid = if (expectedTitle.isNotBlank()) {
-            val matched = valid.filter { isTitleMatch(expectedTitle, it.title) }
-            matched.ifEmpty { valid }
-        } else valid
+        val strictValid = valid.filter { res ->
+            val artistOk = !requireArtistMatch || expectedArtist.isBlank() || isArtistMatch(expectedArtist, res.artist)
+            val titleOk = expectedTitle.isBlank() ||
+                isTitleMatch(expectedTitle, res.title) ||
+                (artistOk && expectedArtist.isNotBlank() && isTitleWordPrefixMatch(expectedTitle, res.title))
+            titleOk && artistOk
+        }
+        if (strictValid.isEmpty()) return null
 
-        // 1. Genius synced (rarely happens but would be perfect)
-        strictValid.firstOrNull { it.isSynced && it.sourceName.contains("Genius", ignoreCase = true) }?.let { return it }
-        // 2. Other synced lyrics (Spotify/LRC karaoke)
-        strictValid.firstOrNull { it.isSynced }?.let { return it }
-        // 3. Genius.com plain (most reliable for Russian/underground rap)
+        // 1. Verified synced lyrics (karaoke timestamps) with real body (>2 lines)
+        strictValid.firstOrNull { it.isSynced && it.lines.size >= 3 }?.let { return it }
+        // 2. Genius.com plain lyrics
         strictValid.firstOrNull { it.sourceName.contains("Genius", ignoreCase = true) }?.let { return it }
-        // 4. Anything valid
+        // 3. Other verified plain/short lyrics
         return strictValid.first()
+    }
+
+    private fun buildGeniusQueries(artist: String, title: String, requireArtist: Boolean): List<String> {
+        val queries = linkedSetOf<String>()
+        val cleanArt = MediaNotificationListener.canonicalizeArtist(artist)
+        val cleanTitle = MediaNotificationListener.stripNoise(title).ifBlank { title }
+        val transTitle = transliterateTitleWords(cleanTitle)
+        val hasCyrillicArtist = cleanArt.isNotBlank() && CYRILLIC_REGEX.containsMatchIn(cleanArt)
+        val latinArtist = if (hasCyrillicArtist) transliterateRuToLat(cleanArt).trim() else ""
+
+        if (cleanArt.isNotBlank()) {
+            queries.add("$cleanArt $cleanTitle")
+            if (hasCyrillicArtist && latinArtist.isNotBlank() && !latinArtist.equals(cleanArt, ignoreCase = true)) {
+                queries.add("$latinArtist $cleanTitle")
+            }
+            if (!transTitle.equals(cleanTitle, ignoreCase = true)) {
+                queries.add("$cleanArt $transTitle")
+                if (hasCyrillicArtist && latinArtist.isNotBlank()) {
+                    queries.add("$latinArtist $transTitle")
+                }
+            }
+        }
+        if (!requireArtist || cleanArt.isBlank()) {
+            queries.add(cleanTitle)
+            if (!transTitle.equals(cleanTitle, ignoreCase = true)) {
+                queries.add(transTitle)
+            }
+        }
+        return queries.toList()
+    }
+
+    private fun scoreGeniusHit(
+        expectedTitle: String,
+        originalTitle: String,
+        expectedArtist: String,
+        hitTitle: String,
+        hitPrimaryArtist: String,
+        hitAllArtists: String
+    ): Int {
+        var score = 0
+        if (isTitleMatch(expectedTitle, hitTitle) ||
+            (!originalTitle.equals(expectedTitle, true) && isTitleMatch(originalTitle, hitTitle))
+        ) {
+            score += 100
+        } else if (expectedArtist.isNotBlank() &&
+            (isArtistMatch(expectedArtist, hitPrimaryArtist) || isArtistMatch(expectedArtist, hitAllArtists)) &&
+            (isTitleWordPrefixMatch(expectedTitle, hitTitle) || isTitleWordPrefixMatch(originalTitle, hitTitle))
+        ) {
+            score += 60
+        }
+
+        if (expectedArtist.isNotBlank() && isArtistMatch(expectedArtist, hitPrimaryArtist)) {
+            score += 50
+        } else if (expectedArtist.isNotBlank() && isArtistMatch(expectedArtist, hitAllArtists)) {
+            score += 25
+        }
+
+        val normExp = normalizeForMatch(cleanTitleForComparison(expectedTitle))
+        val normCandNoParens = normalizeForMatch(cleanTitleForComparison(hitTitle).replace(PAREN_BRACKET_REGEX, ""))
+        if (normExp.isNotBlank() && normExp == normCandNoParens) {
+            score += 30
+        }
+
+        val expLower = expectedTitle.lowercase()
+        val hitLower = hitTitle.lowercase()
+        val penaltyKeywords = listOf("remix", "sped up", "slowed", "live", "acoustic", "instrumental")
+        for (kw in penaltyKeywords) {
+            if (hitLower.contains(kw) && !expLower.contains(kw)) {
+                score -= 40
+            }
+        }
+        return score
     }
 
     suspend fun getLyrics(
         context: Context,
         artist: String,
         title: String,
-        rawTitle: String = ""
+        rawTitle: String = "",
+        artistFromTitle: Boolean = false,
+        forceRefresh: Boolean = false
     ): Result<LyricsResult> = withContext(Dispatchers.IO) {
+        cleanOldCaches(context)
+
         val parsed = MediaNotificationListener.parseTrack(
             rawTitle = if (rawTitle.isNotBlank()) rawTitle else title,
             rawArtist = artist
@@ -217,22 +457,6 @@ object GeniusLyricsFetcher {
 
         if (strippedTitle.isBlank()) {
             return@withContext Result.failure(Exception("Пустое название трека"))
-        }
-
-        val cacheKey = CACHE_VERSION + sanitizeKey("$cleanArtist - $strippedTitle")
-
-        // 1. Check memory cache
-        memoryCache[cacheKey]?.let {
-            if (it.lines.isNotEmpty() && isTitleMatch(strippedTitle, it.title)) {
-                return@withContext Result.success(it)
-            }
-        }
-
-        // 2. Check disk cache
-        val diskCached = readDiskCache(context, cacheKey)
-        if (diskCached != null && diskCached.lines.isNotEmpty() && isTitleMatch(strippedTitle, diskCached.title)) {
-            memoryCache[cacheKey] = diskCached
-            return@withContext Result.success(diskCached)
         }
 
         val transTitle = transliterateTitleWords(strippedTitle)
@@ -247,6 +471,37 @@ object GeniusLyricsFetcher {
         val primaryArtist = artistParts.firstOrNull() ?: ""
         val secondaryArtist = artistParts.getOrNull(1) ?: ""
 
+        val artistTrusted = cleanArtist.isNotBlank() && (
+            parsed.artistFromTitle ||
+            artistFromTitle ||
+            MediaNotificationListener.findKnownArtist(primaryArtist) != null ||
+            !MediaNotificationListener.isLikelyFakeUploader(primaryArtist)
+        )
+
+        val cacheKey = CACHE_VERSION + sanitizeKey("$cleanArtist - $strippedTitle")
+
+        if (!forceRefresh) {
+            memoryCache[cacheKey]?.let {
+                val titleOk = isTitleMatch(strippedTitle, it.title) ||
+                    (artistTrusted && isTitleWordPrefixMatch(strippedTitle, it.title))
+                val artistOk = !artistTrusted || isArtistMatch(primaryArtist, it.artist)
+                if (it.lines.isNotEmpty() && titleOk && artistOk) {
+                    return@withContext Result.success(it)
+                }
+            }
+
+            val diskCached = readDiskCache(context, cacheKey)
+            if (diskCached != null && diskCached.lines.isNotEmpty()) {
+                val titleOk = isTitleMatch(strippedTitle, diskCached.title) ||
+                    (artistTrusted && isTitleWordPrefixMatch(strippedTitle, diskCached.title))
+                val artistOk = !artistTrusted || isArtistMatch(primaryArtist, diskCached.artist)
+                if (titleOk && artistOk) {
+                    memoryCache[cacheKey] = diskCached
+                    return@withContext Result.success(diskCached)
+                }
+            }
+        }
+
         fun cacheAndReturn(res: LyricsResult): Result<LyricsResult> {
             saveDiskCache(context, cacheKey, res)
             memoryCache[cacheKey] = res
@@ -254,48 +509,95 @@ object GeniusLyricsFetcher {
         }
 
         // =========================================================================
-        // YANDEX MUSIC SMART RESOLVER (runs first to get canonical artist+title)
-        // Resolves Russian slang ("рокет драйв хоум", "френдли таг кальма"),
-        // missing 'ё', typos, AND fake SoundCloud uploader usernames!
+        // STAGE 1: FAST PARALLEL SEARCH — GENIUS OKHTTP + LRCLIB STRICT
+        // Uses user's parsed (primaryArtist, strippedTitle) directly before any resolver.
         // =========================================================================
-        val yandexResolved = resolveViaYandexMusic(primaryArtist, strippedTitle, parsed.artistFromTitle)
-        val resolvedArtist = yandexResolved?.artist?.ifBlank { primaryArtist } ?: primaryArtist
-        val resolvedTitle = yandexResolved?.title?.ifBlank { strippedTitle } ?: strippedTitle
+        val (stage1Genius, stage1Lrclib) = coroutineScope {
+            val dGenius = async {
+                fetchGeniusOkHttp(primaryArtist, strippedTitle, requireArtist = artistTrusted)
+            }
+            val dLrclib = async {
+                if (primaryArtist.isBlank()) {
+                    null
+                } else {
+                    val exact = fetchLrclibExact(primaryArtist, strippedTitle)
+                        ?: (if (!transTitle.equals(strippedTitle, true)) fetchLrclibExact(primaryArtist, transTitle) else null)
+                        ?: (if (secondaryArtist.isNotBlank()) fetchLrclibExact(secondaryArtist, strippedTitle) else null)
+                    val searched = if (exact?.isSynced == true) null else {
+                        searchLrclibStrict(
+                            query = "$primaryArtist $strippedTitle",
+                            expectedArtist = primaryArtist,
+                            expectedTitle = strippedTitle,
+                            requireArtist = artistTrusted
+                        )
+                    }
+                    pickBestResult(
+                        listOf(exact, searched),
+                        expectedTitle = strippedTitle,
+                        expectedArtist = primaryArtist,
+                        requireArtistMatch = artistTrusted
+                    )
+                }
+            }
+            Pair(dGenius.await(), dLrclib.await())
+        }
+
+        if (stage1Lrclib != null && stage1Lrclib.isSynced && stage1Lrclib.lines.size >= 3) {
+            val withGeniusUrl = if (stage1Genius?.sourceUrl?.isNotBlank() == true) {
+                stage1Lrclib.copy(geniusUrl = stage1Genius.sourceUrl)
+            } else {
+                stage1Lrclib
+            }
+            return@withContext cacheAndReturn(withGeniusUrl)
+        }
+
+        if (stage1Genius != null && stage1Genius.lines.isNotEmpty()) {
+            return@withContext cacheAndReturn(stage1Genius)
+        }
 
         // =========================================================================
-        // STAGE 1: GENIUS FIRST (DIRECT SLUG + SEARCH API + WEBVIEW)
-        // Genius is THE most reliable source for Russian rap, underground, SoundCloud leaks.
-        // We try it FIRST so we never return a wrong track from less reliable sources.
+        // STAGE 2: STRICT YANDEX RESOLVER + CHROMIUM WEBVIEW GENIUS + NETEASE/QQ
         // =========================================================================
-        // 1a. Genius direct slug (instant, no search needed)
-        if (resolvedArtist.isNotBlank() && resolvedTitle.isNotBlank()) {
-            val directUrl = constructDirectGeniusUrl(resolvedArtist, resolvedTitle)
-            val directResult = fetchGeniusHtmlAndParse(directUrl)
-            if (directResult != null && directResult.lines.isNotEmpty()) {
-                return@withContext cacheAndReturn(directResult.copy(
-                    title = resolvedTitle, artist = resolvedArtist, sourceName = "Genius.com"
-                ))
+        val yandexResolved = resolveViaYandexMusic(
+            primaryArtist = primaryArtist,
+            strippedTitle = strippedTitle,
+            artistFromTitle = parsed.artistFromTitle || artistFromTitle
+        )
+        val ymArtist = yandexResolved?.artist?.ifBlank { primaryArtist } ?: primaryArtist
+        val ymTitle = yandexResolved?.title?.ifBlank { strippedTitle } ?: strippedTitle
+
+        // If Yandex resolved to a cleaner canonical artist/title, retry Genius OkHttp & LRCLIB strictly
+        if (yandexResolved != null && (!ymTitle.equals(strippedTitle, true) || !ymArtist.equals(primaryArtist, true))) {
+            val (ymGenius, ymLrclib) = coroutineScope {
+                val dg = async {
+                    fetchGeniusOkHttp(ymArtist, ymTitle, requireArtist = true)
+                }
+                val dl = async {
+                    val exact = fetchLrclibExact(ymArtist, ymTitle)
+                    val searched = if (exact?.isSynced == true) null else {
+                        searchLrclibStrict("$ymArtist $ymTitle", ymArtist, ymTitle, requireArtist = true)
+                    }
+                    pickBestResult(listOf(exact, searched), expectedTitle = ymTitle, expectedArtist = ymArtist, requireArtistMatch = true)
+                }
+                Pair(dg.await(), dl.await())
+            }
+            if (ymLrclib != null && ymLrclib.isSynced && ymLrclib.lines.size >= 3) {
+                val withUrl = if (ymGenius?.sourceUrl?.isNotBlank() == true) ymLrclib.copy(geniusUrl = ymGenius.sourceUrl) else ymLrclib
+                return@withContext cacheAndReturn(withUrl)
+            }
+            if (ymGenius != null && ymGenius.lines.isNotEmpty()) {
+                return@withContext cacheAndReturn(ymGenius)
             }
         }
 
-        // 1b. Genius search API (OkHttp — may fail due to Cloudflare, but fast when it works)
-        val geniusOkHttpResult = if (resolvedArtist.isNotBlank()) {
-            fetchGeniusOkHttp(resolvedArtist, resolvedTitle, requireArtist = true)
-                ?: fetchGeniusOkHttp(resolvedArtist, strippedTitle, requireArtist = true)
-        } else {
-            fetchGeniusOkHttp("", strippedTitle, requireArtist = false)
-        }
-        if (geniusOkHttpResult != null && geniusOkHttpResult.lines.isNotEmpty()) {
-            return@withContext cacheAndReturn(geniusOkHttpResult)
-        }
-
-        // 1c. Genius WebView (Chromium engine — immune to Cloudflare 403)
+        // Genius Chromium WebView engine (for Cloudflare-protected pages / snippets)
         try {
             val webViewGenius = fetchGeniusViaWebView(
                 context = context,
-                primaryArtist = resolvedArtist,
-                strippedTitle = resolvedTitle,
-                originalTitle = strippedTitle
+                primaryArtist = ymArtist.ifBlank { primaryArtist },
+                strippedTitle = ymTitle,
+                originalTitle = strippedTitle,
+                requireArtist = artistTrusted
             )
             if (webViewGenius != null && webViewGenius.lines.isNotEmpty()) {
                 return@withContext cacheAndReturn(webViewGenius)
@@ -304,79 +606,72 @@ object GeniusLyricsFetcher {
             Log.w(TAG, "Genius WebView stage error: ${e.message}")
         }
 
-        // =========================================================================
-        // STAGE 2: FAST PARALLEL FALLBACK (LRCLIB + NetEase + QQ)
-        // Only reached when Genius failed entirely. Strict title matching prevents wrong tracks.
-        // =========================================================================
-        val stage2Best = coroutineScope {
-            val ymArtists = yandexResolved?.allArtists?.ifEmpty { listOf(resolvedArtist) }?.filter { it.isNotBlank() }
-                ?: listOf(resolvedArtist).filter { it.isNotBlank() }
-            val ymPrimary = ymArtists.firstOrNull() ?: primaryArtist
-
-            val dLrclibExact = async {
-                if (ymPrimary.isBlank()) null
-                else fetchLrclibExact(ymPrimary, resolvedTitle)
-                    ?: (if (!transTitle.equals(resolvedTitle, true)) fetchLrclibExact(ymPrimary, transTitle) else null)
-                    ?: (if (secondaryArtist.isNotBlank()) fetchLrclibExact(secondaryArtist, resolvedTitle) else null)
-                    // Also try original strippedTitle if resolver changed it
-                    ?: (if (!resolvedTitle.equals(strippedTitle, true)) fetchLrclibExact(ymPrimary, strippedTitle) else null)
+        // Parallel NetEase & QQ strict fallback (using both original and Yandex canonical metadata)
+        val stage2Fallbacks = coroutineScope {
+            val dNetEaseOrig = async {
+                if (primaryArtist.isBlank()) null
+                else fetchNetEase(primaryArtist, strippedTitle, requireArtist = artistTrusted)
             }
-            val dLrclibSearch = async {
-                val q = if (ymPrimary.isNotBlank()) "$ymPrimary $resolvedTitle" else resolvedTitle
-                searchLrclibStrict(q, ymPrimary, resolvedTitle, requireArtist = ymPrimary.isNotBlank())
+            val dQQOrig = async {
+                if (primaryArtist.isBlank()) null
+                else fetchQQMusic(primaryArtist, strippedTitle, requireArtist = artistTrusted)
             }
-            val dNetEase = async {
-                if (ymPrimary.isBlank()) null
-                else fetchNetEase(ymPrimary, resolvedTitle, requireArtist = true)
+            val dNetEaseYm = async {
+                if (yandexResolved != null && ymArtist.isNotBlank() && (!ymTitle.equals(strippedTitle, true) || !ymArtist.equals(primaryArtist, true))) {
+                    fetchNetEase(ymArtist, ymTitle, requireArtist = true)
+                } else null
             }
-            val dQQ = async {
-                if (ymPrimary.isBlank()) null
-                else fetchQQMusic(ymPrimary, resolvedTitle, requireArtist = true)
+            val dQQYm = async {
+                if (yandexResolved != null && ymArtist.isNotBlank() && (!ymTitle.equals(strippedTitle, true) || !ymArtist.equals(primaryArtist, true))) {
+                    fetchQQMusic(ymArtist, ymTitle, requireArtist = true)
+                } else null
             }
-
-            pickBestResult(listOf(dLrclibExact.await(), dLrclibSearch.await(), dNetEase.await(), dQQ.await()),
-                expectedTitle = resolvedTitle, expectedArtist = resolvedArtist)
+            listOfNotNull(dNetEaseOrig.await(), dQQOrig.await(), dNetEaseYm.await(), dQQYm.await())
         }
-        if (stage2Best != null) return@withContext cacheAndReturn(stage2Best)
 
-        // =========================================================================
-        // STAGE 3: INVERSION FALLBACK + TITLE-ONLY STRICT RESCUE
-        // Rescues "Title - Artist" swaps AND SoundCloud re-uploads with fake uploader names
-        // while still strictly verifying title match so unrelated songs are NEVER returned!
-        // =========================================================================
-        val stage3Best = coroutineScope {
-            val dInverted = async {
-                if (primaryArtist.isNotBlank() && strippedTitle.isNotBlank() && parsed.artistFromTitle) {
-                    fetchLrclibExact(strippedTitle, primaryArtist)
-                        ?: fetchNetEase(strippedTitle, primaryArtist, requireArtist = true)
-                } else null
+        val stage2Pick = pickBestResult(
+            results = stage2Fallbacks + listOfNotNull(stage1Lrclib),
+            expectedTitle = ymTitle,
+            expectedArtist = ymArtist.ifBlank { primaryArtist },
+            requireArtistMatch = artistTrusted
+        )
+        if (stage2Pick != null) return@withContext cacheAndReturn(stage2Pick)
+
+        // Check swapped "Title - Artist" when dash came from title
+        if (primaryArtist.isNotBlank() && strippedTitle.isNotBlank() && parsed.artistFromTitle) {
+            val inverted = coroutineScope {
+                val dl = async { fetchLrclibExact(strippedTitle, primaryArtist) }
+                val dn = async { fetchNetEase(strippedTitle, primaryArtist, requireArtist = true) }
+                pickBestResult(listOf(dl.await(), dn.await()), expectedTitle = primaryArtist, expectedArtist = strippedTitle, requireArtistMatch = true)
             }
-
-            val dTitleOnlyLrclib = async {
-                if (strippedTitle.length >= 3) {
-                    searchLrclibStrict(strippedTitle, "", strippedTitle, requireArtist = false)
-                        ?: (if (!transTitle.equals(strippedTitle, true)) searchLrclibStrict(transTitle, "", transTitle, requireArtist = false) else null)
-                } else null
-            }
-
-            val dTitleOnlyNetEase = async {
-                if (strippedTitle.length >= 3) {
-                    fetchNetEase("", strippedTitle, requireArtist = false)
-                } else null
-            }
-
-            val dTitleOnlyQQ = async {
-                if (strippedTitle.length >= 3) {
-                    fetchQQMusic("", strippedTitle, requireArtist = false)
-                } else null
-            }
-
-            pickBestResult(listOf(dInverted.await(), dTitleOnlyLrclib.await(), dTitleOnlyNetEase.await(), dTitleOnlyQQ.await()),
-                expectedTitle = strippedTitle)
+            if (inverted != null) return@withContext cacheAndReturn(inverted)
         }
-        if (stage3Best != null) return@withContext cacheAndReturn(stage3Best)
 
-        return@withContext Result.failure(Exception("Текст не найден. Попробуйте ручной поиск."))
+        // =========================================================================
+        // STAGE 3: UNTRUSTED UPLOADER / NO-ARTIST RESCUE ONLY
+        // Runs ONLY when artist was NOT trusted (e.g. fake SoundCloud channel like sliv_trekov_52).
+        // When artist IS trusted, we NEVER fall back to random title-only songs!
+        // =========================================================================
+        if (!artistTrusted && strippedTitle.length >= 5) {
+            val targetTitle = ymTitle.ifBlank { strippedTitle }
+            val stage3Best = coroutineScope {
+                val dLrclib = async {
+                    searchLrclibStrict(targetTitle, "", targetTitle, requireArtist = false)
+                        ?: (if (!transTitle.equals(targetTitle, true)) searchLrclibStrict(transTitle, "", transTitle, requireArtist = false) else null)
+                }
+                val dNetEase = async { fetchNetEase("", targetTitle, requireArtist = false) }
+                val dQQ = async { fetchQQMusic("", targetTitle, requireArtist = false) }
+                pickBestResult(
+                    listOf(dLrclib.await(), dNetEase.await(), dQQ.await()),
+                    expectedTitle = targetTitle,
+                    expectedArtist = "",
+                    requireArtistMatch = false
+                )
+            }
+            if (stage3Best != null) return@withContext cacheAndReturn(stage3Best)
+        }
+
+        return@withContext Result.failure(Exception("Текст не найден. Откройте поиск на Genius."))
     }
 
     private fun transliterateTitleWords(title: String): String {
@@ -400,17 +695,18 @@ object GeniusLyricsFetcher {
         strippedTitle: String,
         artistFromTitle: Boolean
     ): ResolvedTrack? {
+        val knownArtist = primaryArtist.isNotBlank() &&
+            (artistFromTitle || MediaNotificationListener.findKnownArtist(primaryArtist) != null)
+
         val queries = mutableListOf<String>()
         if (primaryArtist.isNotBlank()) {
             queries.add("$primaryArtist $strippedTitle")
         }
-        // If artist came from SoundCloud uploader (EXTRA_TEXT), it might be a fake channel name!
-        // So also allow resolving by title alone if the combined query fails.
-        if (!artistFromTitle || primaryArtist.isBlank()) {
+        if (!knownArtist || primaryArtist.isBlank()) {
             queries.add(strippedTitle)
         }
 
-        for ((idx, q) in queries.withIndex()) {
+        for (q in queries) {
             try {
                 val url = "https://api.music.yandex.net/search?text=" + URLEncoder.encode(q, "UTF-8") + "&type=track&page=0"
                 val jsonStr = executeGetString(url) ?: continue
@@ -437,17 +733,20 @@ object GeniusLyricsFetcher {
                     val allArtistStr = candArtists.joinToString(" ")
 
                     val titleOk = isTitleMatch(strippedTitle, candTitle)
-                    val artistOk = primaryArtist.isNotBlank() &&
-                        (isArtistMatch(primaryArtist, firstArtist) || isArtistMatch(primaryArtist, allArtistStr))
+                    val artistOk = primaryArtist.isBlank() ||
+                        isArtistMatch(primaryArtist, firstArtist) ||
+                        isArtistMatch(primaryArtist, allArtistStr)
 
-                    // Accept if title matches OR (on query 0 with known artist, artist matches AND track is #1 Yandex hit)
-                    if (titleOk || (idx == 0 && i == 0 && artistOk)) {
-                        return ResolvedTrack(
-                            artist = firstArtist,
-                            allArtists = candArtists,
-                            title = candTitle
-                        )
-                    }
+                    // STRICT: Title MUST always match! Never rewrite "пули" -> "Bring Us Bullets"!
+                    if (!titleOk) continue
+                    // When primary artist is known, artist MUST also match strictly!
+                    if (knownArtist && !artistOk) continue
+
+                    return ResolvedTrack(
+                        artist = firstArtist,
+                        allArtists = candArtists,
+                        title = candTitle
+                    )
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Yandex resolver error for '$q': ${e.message}")
@@ -478,7 +777,7 @@ object GeniusLyricsFetcher {
 
         if (synced.isNotBlank()) {
             val lines = parseLrcLines(synced)
-            if (lines.isNotEmpty()) {
+            if (lines.size >= 3) {
                 return LyricsResult(
                     title = track,
                     artist = art,
@@ -509,7 +808,7 @@ object GeniusLyricsFetcher {
         return null
     }
 
-    // --- LRCLIB SEARCH WITH STRICT TITLE VALIDATION ---
+    // --- LRCLIB SEARCH WITH STRICT TITLE & ARTIST VALIDATION ---
 
     private fun searchLrclibStrict(
         query: String,
@@ -524,22 +823,33 @@ object GeniusLyricsFetcher {
         val arr = JSONArray(jsonStr)
         if (arr.length() == 0) return null
 
+        fun lrclibMatch(track: String, art: String): Pair<String, String>? {
+            val directMatch = isTitleMatch(expectedTitle, track) &&
+                (!requireArtist || expectedArtist.isBlank() || isArtistMatch(expectedArtist, art))
+            if (directMatch) return Pair(track, art)
+
+            val swappedMatch = expectedArtist.isNotBlank() &&
+                isTitleMatch(expectedTitle, art) &&
+                isArtistMatch(expectedArtist, track)
+            if (swappedMatch) return Pair(art, track)
+
+            return null
+        }
+
         // Pass 1: Synced karaoke match
         for (i in 0 until arr.length()) {
             val item = arr.getJSONObject(i)
             val track = item.optCleanString("trackName")
             val art = item.optCleanString("artistName")
-
-            if (!isTitleMatch(expectedTitle, track)) continue
-            if (requireArtist && expectedArtist.isNotBlank() && !isArtistMatch(expectedArtist, art)) continue
+            val matchedNames = lrclibMatch(track, art) ?: continue
 
             val synced = item.optCleanString("syncedLyrics")
             if (synced.isNotBlank()) {
                 val lines = parseLrcLines(synced)
-                if (lines.isNotEmpty()) {
+                if (lines.size >= 3) {
                     return LyricsResult(
-                        title = track,
-                        artist = art,
+                        title = matchedNames.first,
+                        artist = matchedNames.second,
                         lines = lines,
                         plainLyrics = item.optCleanString("plainLyrics").ifBlank { lines.joinToString("\n") { it.text } },
                         sourceUrl = "https://lrclib.net",
@@ -555,17 +865,15 @@ object GeniusLyricsFetcher {
             val item = arr.getJSONObject(i)
             val track = item.optCleanString("trackName")
             val art = item.optCleanString("artistName")
-
-            if (!isTitleMatch(expectedTitle, track)) continue
-            if (requireArtist && expectedArtist.isNotBlank() && !isArtistMatch(expectedArtist, art)) continue
+            val matchedNames = lrclibMatch(track, art) ?: continue
 
             val plain = item.optCleanString("plainLyrics")
             if (plain.isNotBlank()) {
                 val lines = sanitizeLyricsLines(plain)
                 if (lines.isNotEmpty()) {
                     return LyricsResult(
-                        title = track,
-                        artist = art,
+                        title = matchedNames.first,
+                        artist = matchedNames.second,
                         lines = lines,
                         plainLyrics = plain,
                         sourceUrl = "https://lrclib.net",
@@ -598,13 +906,19 @@ object GeniusLyricsFetcher {
             val songArtists = mutableListOf<String>()
             if (artistsArr != null) {
                 for (a in 0 until artistsArr.length()) {
-                    songArtists.add(artistsArr.getJSONObject(a).optCleanString("name"))
+                    val aName = artistsArr.getJSONObject(a).optCleanString("name")
+                    if (aName.isNotBlank()) songArtists.add(aName)
                 }
             }
-            val songArtist = songArtists.joinToString(" ")
+            val songArtistJoined = songArtists.joinToString(", ")
 
-            if (!isTitleMatch(title, songName)) continue
-            if (requireArtist && artist.isNotBlank() && !isArtistMatch(artist, songArtist) && !isArtistMatch(songArtist, artist)) continue
+            val artistOk = !requireArtist || artist.isBlank() ||
+                songArtists.any { isArtistMatch(artist, it) } ||
+                isArtistMatch(artist, songArtistJoined)
+            val titleOk = isTitleMatch(title, songName) ||
+                (artistOk && artist.isNotBlank() && isTitleWordPrefixMatch(title, songName))
+
+            if (!titleOk || !artistOk) continue
 
             val songId = song.optLong("id", -1L)
             if (songId <= 0) continue
@@ -625,8 +939,9 @@ object GeniusLyricsFetcher {
                 }
                 .joinToString("\n")
 
-            val isSynced = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(cleanedLyric)
-            val lines = if (isSynced) parseLrcLines(cleanedLyric) else sanitizeLyricsLines(cleanedLyric)
+            val hasTimestamps = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(cleanedLyric)
+            val lines = if (hasTimestamps) parseLrcLines(cleanedLyric) else sanitizeLyricsLines(cleanedLyric)
+            val isSynced = hasTimestamps && lines.size >= 3
 
             if (lines.isNotEmpty()) {
                 return LyricsResult(
@@ -664,13 +979,19 @@ object GeniusLyricsFetcher {
             val singers = mutableListOf<String>()
             if (singerArr != null) {
                 for (a in 0 until singerArr.length()) {
-                    singers.add(singerArr.getJSONObject(a).optCleanString("name"))
+                    val sName = singerArr.getJSONObject(a).optCleanString("name")
+                    if (sName.isNotBlank()) singers.add(sName)
                 }
             }
-            val singerName = singers.joinToString(" ")
+            val singerJoined = singers.joinToString(", ")
 
-            if (!isTitleMatch(title, songName)) continue
-            if (requireArtist && artist.isNotBlank() && !isArtistMatch(artist, singerName) && !isArtistMatch(singerName, artist)) continue
+            val artistOk = !requireArtist || artist.isBlank() ||
+                singers.any { isArtistMatch(artist, it) } ||
+                isArtistMatch(artist, singerJoined)
+            val titleOk = isTitleMatch(title, songName) ||
+                (artistOk && artist.isNotBlank() && isTitleWordPrefixMatch(title, songName))
+
+            if (!titleOk || !artistOk) continue
 
             val songmid = s.optCleanString("songmid")
             if (songmid.isBlank()) continue
@@ -681,8 +1002,9 @@ object GeniusLyricsFetcher {
             val rawLyric = lrcRoot.optCleanString("lyric")
             if (rawLyric.length < 30) continue
 
-            val isSynced = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(rawLyric)
-            val lines = if (isSynced) parseLrcLines(rawLyric) else sanitizeLyricsLines(rawLyric)
+            val hasTimestamps = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(rawLyric)
+            val lines = if (hasTimestamps) parseLrcLines(rawLyric) else sanitizeLyricsLines(rawLyric)
+            val isSynced = hasTimestamps && lines.size >= 3
 
             if (lines.isNotEmpty()) {
                 return LyricsResult(
@@ -700,68 +1022,128 @@ object GeniusLyricsFetcher {
         return null
     }
 
-    // --- GENIUS.COM OKHTTP (TRANSLITERATED LATIN SLUG + MULTI-SEARCH API) ---
+    // --- GENIUS.COM OKHTTP (SONG SEARCH API + DIRECT SLUG FALLBACK) ---
 
-    private fun fetchGeniusOkHttp(artist: String, title: String, requireArtist: Boolean): LyricsResult? {
-        // 1. Direct transliterated Latin slug (e.g. "Платина - В темноте" -> "https://genius.com/Platina-v-temnote-lyrics")
-        if (artist.isNotBlank() && title.isNotBlank()) {
-            val directUrl = constructDirectGeniusUrl(artist, title)
-            val directResult = fetchGeniusHtmlAndParse(directUrl)
-            if (directResult != null && directResult.lines.isNotEmpty()) {
-                return directResult.copy(title = title, artist = artist, sourceName = "Genius.com")
-            }
+    private fun getGeniusCookieHeader(): String? {
+        return try {
+            CookieManager.getInstance().getCookie("https://genius.com")?.takeIf { it.isNotBlank() }
+        } catch (_: Throwable) {
+            null
         }
+    }
 
-        // 2. Genius multi-search API (checks BOTH 'top_hit' and 'song' sections!)
-        val query = if (requireArtist && artist.isNotBlank()) "$artist $title" else title
-        val searchUrl = "https://genius.com/api/search/multi?per_page=8&q=" + URLEncoder.encode(query, "UTF-8")
+    private fun queryOkHttpGeniusApi(query: String): List<GeniusWebViewFetcher.GeniusHit> {
+        val searchUrl = "https://genius.com/api/search/song?per_page=8&q=" +
+            URLEncoder.encode(query, "UTF-8").replace("+", "%20")
+        val hits = mutableListOf<GeniusWebViewFetcher.GeniusHit>()
         try {
-            val req = Request.Builder()
+            val builder = Request.Builder()
                 .url(searchUrl)
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "application/json, text/plain, */*")
                 .header("Referer", "https://genius.com/")
                 .header("Origin", "https://genius.com")
                 .header("X-Requested-With", "XMLHttpRequest")
-                .build()
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return null
-            val body = resp.body?.string() ?: return null
-            if (!body.trim().startsWith("{")) return null
+            getGeniusCookieHeader()?.let { builder.header("Cookie", it) }
 
-            val root = JSONObject(body)
-            val sections = root.optJSONObject("response")?.optJSONArray("sections") ?: return null
-            for (i in 0 until sections.length()) {
-                val sec = sections.getJSONObject(i)
-                val secType = sec.optCleanString("type")
-                if (secType == "song" || secType == "top_hit") {
-                    val hits = sec.optJSONArray("hits") ?: continue
-                    for (h in 0 until hits.length()) {
-                        val hit = hits.getJSONObject(h)
-                        val result = hit.optJSONObject("result") ?: continue
-                        val resType = result.optCleanString("_type").ifBlank { hit.optCleanString("type") }
-                        if (resType != "song") continue
+            client.newCall(builder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val body = resp.body?.string() ?: return emptyList()
+                if (!body.trim().startsWith("{")) return emptyList()
 
-                        val candTitle = result.optCleanString("title")
-                        val candArtist = result.optJSONObject("primary_artist")?.optCleanString("name") ?: ""
-                        val songUrl = result.optCleanString("url")
+                val root = JSONObject(body)
+                val sections = root.optJSONObject("response")?.optJSONArray("sections") ?: return emptyList()
+                for (i in 0 until sections.length()) {
+                    val sec = sections.getJSONObject(i)
+                    val secType = sec.optCleanString("type")
+                    if (secType == "song" || secType == "top_hit") {
+                        val hitArr = sec.optJSONArray("hits") ?: continue
+                        for (h in 0 until hitArr.length()) {
+                            val hit = hitArr.getJSONObject(h)
+                            val result = hit.optJSONObject("result") ?: continue
+                            val resType = result.optCleanString("_type").ifBlank { hit.optCleanString("type") }
+                            if (resType != "song") continue
 
-                        if (!isTitleMatch(title, candTitle)) continue
-                        if (requireArtist && artist.isNotBlank() && !isArtistMatch(artist, candArtist)) continue
+                            val candTitle = result.optCleanString("title")
+                            val candArtist = result.optJSONObject("primary_artist")?.optCleanString("name") ?: ""
+                            val candArtistNames = result.optCleanString("artist_names").ifBlank { candArtist }
+                            val songUrl = result.optCleanString("url")
 
-                        val parsed = fetchGeniusHtmlAndParse(songUrl)
-                        if (parsed != null && parsed.lines.isNotEmpty()) {
-                            return parsed.copy(
-                                title = candTitle.ifBlank { title },
-                                artist = candArtist.ifBlank { artist },
-                                sourceName = "Genius.com"
+                            if (candTitle.isBlank() || !songUrl.startsWith("http")) continue
+                            if (candArtist.contains("Genius", ignoreCase = true)) continue
+                            if (!songUrl.endsWith("-lyrics", ignoreCase = true)) continue
+
+                            hits.add(
+                                GeniusWebViewFetcher.GeniusHit(
+                                    title = candTitle,
+                                    artist = candArtist,
+                                    url = songUrl,
+                                    artistNames = candArtistNames
+                                )
                             )
                         }
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Genius OkHttp search failed: ${e.message}")
+            Log.w(TAG, "Genius OkHttp search failed for '$query': ${e.message}")
+        }
+        return hits.distinctBy { it.url }
+    }
+
+    private fun fetchGeniusOkHttp(artist: String, title: String, requireArtist: Boolean): LyricsResult? {
+        val queries = buildGeniusQueries(artist, title, requireArtist)
+        for (q in queries) {
+            val hits = queryOkHttpGeniusApi(q)
+            if (hits.isEmpty()) continue
+
+            val candidates = hits.filter { hit ->
+                val artistOk = !requireArtist || artist.isBlank() ||
+                    isArtistMatch(artist, hit.artist) ||
+                    isArtistMatch(artist, hit.artistNames)
+                val titleOk = isTitleMatch(title, hit.title) ||
+                    (artistOk && artist.isNotBlank() && isTitleWordPrefixMatch(title, hit.title))
+                titleOk && artistOk
+            }
+
+            val bestHit = candidates.maxByOrNull { hit ->
+                scoreGeniusHit(
+                    expectedTitle = title,
+                    originalTitle = title,
+                    expectedArtist = artist,
+                    hitTitle = hit.title,
+                    hitPrimaryArtist = hit.artist,
+                    hitAllArtists = hit.artistNames
+                )
+            }
+
+            if (bestHit != null) {
+                val parsed = fetchGeniusHtmlAndParse(bestHit.url)
+                if (parsed != null && parsed.lines.isNotEmpty()) {
+                    return parsed.copy(
+                        title = bestHit.title.ifBlank { title },
+                        artist = bestHit.artist.ifBlank { artist },
+                        sourceUrl = bestHit.url,
+                        geniusUrl = bestHit.url,
+                        sourceName = "Genius.com"
+                    )
+                }
+            }
+        }
+
+        // Direct slug fallback (only when search API returned no usable result)
+        if (artist.isNotBlank() && title.isNotBlank()) {
+            val directUrl = constructDirectGeniusUrl(artist, title)
+            val directResult = fetchGeniusHtmlAndParse(directUrl)
+            if (directResult != null && directResult.lines.isNotEmpty()) {
+                return directResult.copy(
+                    title = directResult.title.ifBlank { title },
+                    artist = directResult.artist.ifBlank { artist },
+                    sourceUrl = directUrl,
+                    geniusUrl = directUrl,
+                    sourceName = "Genius.com"
+                )
+            }
         }
         return null
     }
@@ -772,63 +1154,59 @@ object GeniusLyricsFetcher {
         context: Context,
         primaryArtist: String,
         strippedTitle: String,
-        originalTitle: String
+        originalTitle: String,
+        requireArtist: Boolean
     ): LyricsResult? {
-        val searchAttempts = mutableListOf<Pair<String, Boolean>>()
-
-        // Attempt 1: "artist title" (most specific)
-        if (primaryArtist.isNotBlank()) {
-            searchAttempts.add(Pair("$primaryArtist $strippedTitle", true))
-        }
-        // Attempt 2: title only (catches mismatched artist names)
-        searchAttempts.add(Pair(strippedTitle, false))
-        // Attempt 3: original title if different
+        val searchQueries = linkedSetOf<String>()
+        searchQueries.addAll(buildGeniusQueries(primaryArtist, strippedTitle, requireArtist))
         if (!originalTitle.equals(strippedTitle, ignoreCase = true) && originalTitle.length >= 3) {
-            searchAttempts.add(Pair(originalTitle, false))
-        }
-        // Attempt 4: transliterated title (for Cyrillic titles)
-        val transTitle = transliterateRuToLat(strippedTitle).trim()
-        if (transTitle.isNotBlank() && !transTitle.equals(strippedTitle, ignoreCase = true)) {
             if (primaryArtist.isNotBlank()) {
-                searchAttempts.add(Pair("$primaryArtist $transTitle", true))
+                searchQueries.add("$primaryArtist $originalTitle")
             }
-            searchAttempts.add(Pair(transTitle, false))
+            if (!requireArtist || primaryArtist.isBlank()) {
+                searchQueries.add(originalTitle)
+            }
         }
 
-        for ((query, requireArtist) in searchAttempts) {
+        for (query in searchQueries) {
             val hits = GeniusWebViewFetcher.searchSongs(context, query)
             if (hits.isEmpty()) continue
 
-            // For Genius, we can be a bit more lenient because Genius search itself is good
-            // at finding the right track. But we still verify title match.
-            val matched = hits.firstOrNull { hit ->
-                val titleOk = isTitleMatch(strippedTitle, hit.title) || isTitleMatch(originalTitle, hit.title)
-                val artistOk = !requireArtist || primaryArtist.isBlank() || isArtistMatch(primaryArtist, hit.artist)
+            val candidates = hits.filter { hit ->
+                val artistOk = !requireArtist || primaryArtist.isBlank() ||
+                    isArtistMatch(primaryArtist, hit.artist) ||
+                    isArtistMatch(primaryArtist, hit.artistNames)
+                val titleOk = isTitleMatch(strippedTitle, hit.title) ||
+                    isTitleMatch(originalTitle, hit.title) ||
+                    (artistOk && primaryArtist.isNotBlank() && (
+                        isTitleWordPrefixMatch(strippedTitle, hit.title) ||
+                        isTitleWordPrefixMatch(originalTitle, hit.title)
+                    ))
                 titleOk && artistOk
             }
 
-            // If strict match failed, try the FIRST Genius result when searching with artist+title
-            // (Genius search is smart enough to return the right song in most cases)
-            val finalHit = matched ?: if (requireArtist && hits.isNotEmpty()) {
-                val firstHit = hits.first()
-                // Accept first result only if title has reasonable overlap
-                if (isTitleMatch(strippedTitle, firstHit.title) || isTitleMatch(originalTitle, firstHit.title)) {
-                    firstHit
-                } else null
-            } else null
+            val bestHit = candidates.maxByOrNull { hit ->
+                scoreGeniusHit(
+                    expectedTitle = strippedTitle,
+                    originalTitle = originalTitle,
+                    expectedArtist = primaryArtist,
+                    hitTitle = hit.title,
+                    hitPrimaryArtist = hit.artist,
+                    hitAllArtists = hit.artistNames
+                )
+            } ?: continue
 
-            if (finalHit == null) continue
-
-            val rawLyrics = GeniusWebViewFetcher.scrapeLyricsFromUrl(context, finalHit.url) ?: continue
+            val rawLyrics = GeniusWebViewFetcher.scrapeLyricsFromUrl(context, bestHit.url) ?: continue
             val cleaned = cleanLyrics(rawLyrics)
             val lines = sanitizeLyricsLines(cleaned)
             if (lines.isNotEmpty()) {
                 return LyricsResult(
-                    title = finalHit.title.ifBlank { strippedTitle },
-                    artist = finalHit.artist.ifBlank { primaryArtist },
+                    title = bestHit.title.ifBlank { strippedTitle },
+                    artist = bestHit.artist.ifBlank { primaryArtist },
                     lines = lines,
                     plainLyrics = cleaned,
-                    sourceUrl = finalHit.url,
+                    sourceUrl = bestHit.url,
+                    geniusUrl = bestHit.url,
                     isSynced = false,
                     sourceName = "Genius.com"
                 )
@@ -839,18 +1217,18 @@ object GeniusLyricsFetcher {
 
     private fun fetchGeniusHtmlAndParse(songUrl: String): LyricsResult? {
         return try {
-            val pageRequest = Request.Builder()
+            val reqBuilder = Request.Builder()
                 .url(songUrl)
                 .header("User-Agent", USER_AGENT)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
                 .header("Referer", "https://genius.com/")
-                .build()
+            getGeniusCookieHeader()?.let { reqBuilder.header("Cookie", it) }
 
-            val pageResponse = client.newCall(pageRequest).execute()
-            if (!pageResponse.isSuccessful) return null
-
-            val html = pageResponse.body?.string() ?: return null
+            val html = client.newCall(reqBuilder.build()).execute().use { pageResponse ->
+                if (!pageResponse.isSuccessful) return null
+                pageResponse.body?.string() ?: return null
+            }
 
             val doc = Jsoup.parse(html)
             val lyricContainers = doc.select("div[data-lyrics-container=true]")
@@ -859,12 +1237,17 @@ object GeniusLyricsFetcher {
             if (lyricContainers.isNotEmpty()) {
                 val sb = StringBuilder()
                 for (container in lyricContainers) {
-                    // Strip Genius header/contributor/translation junk!
-                    container.select("[data-exclude-from-selection=true], script, style, button").remove()
-                    container.select("br").append("\\n")
-                    container.select("p").prepend("\\n\\n")
-                    val text = container.text().replace("\\n", "\n")
-                    sb.append(text).append("\n\n")
+                    container.select("[data-exclude-from-selection=true], [class*=LyricsHeader], script, style, button").remove()
+                    container.select("br").append("__NL_TOK__")
+                    container.select("p").prepend("__NL_TOK____NL_TOK__")
+                    container.select("div").prepend("__NL_TOK__")
+                    val text = container.text()
+                        .replace(Regex(" *__NL_TOK__ *"), "\n")
+                        .replace(Regex("\n{3,}"), "\n\n")
+                        .trim()
+                    if (text.isNotEmpty()) {
+                        sb.append(text).append("\n\n")
+                    }
                 }
                 rawText = sb.toString().trim()
             }
@@ -886,7 +1269,7 @@ object GeniusLyricsFetcher {
                         if (plain.isNotBlank()) {
                             rawText = plain
                         }
-                    } catch (ignored: Exception) {}
+                    } catch (_: Exception) {}
                 }
             }
 
@@ -901,12 +1284,56 @@ object GeniusLyricsFetcher {
                 lines = lines,
                 plainLyrics = cleaned,
                 sourceUrl = songUrl,
+                geniusUrl = songUrl,
                 isSynced = false,
                 sourceName = "Genius.com"
             )
         } catch (e: Exception) {
             null
         }
+    }
+
+    fun parseManualGeniusLyrics(
+        title: String,
+        artist: String,
+        rawLyrics: String,
+        geniusUrl: String
+    ): LyricsResult? {
+        val cleaned = cleanLyrics(rawLyrics)
+        val lines = sanitizeLyricsLines(cleaned)
+        if (lines.isEmpty()) return null
+        return LyricsResult(
+            title = MediaNotificationListener.sanitizeText(title).ifBlank { "Трек" },
+            artist = MediaNotificationListener.canonicalizeArtist(artist).ifBlank { "Genius.com" },
+            lines = lines,
+            plainLyrics = cleaned,
+            sourceUrl = geniusUrl,
+            geniusUrl = geniusUrl,
+            isSynced = false,
+            sourceName = "Genius.com"
+        )
+    }
+
+    fun saveManualLyricsToCache(
+        context: Context,
+        artist: String,
+        title: String,
+        rawTitle: String,
+        result: LyricsResult
+    ) {
+        val parsed = MediaNotificationListener.parseTrack(
+            rawTitle = if (rawTitle.isNotBlank()) rawTitle else title,
+            rawArtist = artist
+        )
+        val cleanArtist = if (parsed.artist.isNotBlank()) parsed.artist else MediaNotificationListener.canonicalizeArtist(artist)
+        val cleanTitle = if (parsed.title.isNotBlank()) parsed.title else MediaNotificationListener.sanitizeText(title)
+        val strippedTitle = MediaNotificationListener.stripNoise(cleanTitle).ifBlank { cleanTitle }
+        val keyArtist = cleanArtist.ifBlank { result.artist }
+        val keyTitle = strippedTitle.ifBlank { result.title }
+        if (keyTitle.isBlank()) return
+        val cacheKey = CACHE_VERSION + sanitizeKey("$keyArtist - $keyTitle")
+        memoryCache[cacheKey] = result
+        saveDiskCache(context, cacheKey, result)
     }
 
     // --- PARSING & UTILITIES ---
@@ -952,7 +1379,8 @@ object GeniusLyricsFetcher {
                 !line.equals("undefined", ignoreCase = true) &&
                 !line.startsWith("Embed", ignoreCase = true) &&
                 !line.startsWith("You might also like", ignoreCase = true) &&
-                !line.matches(Regex("^\\d+\\s+Contributors?.*", RegexOption.IGNORE_CASE))
+                !line.matches(Regex("^\\d+\\s+Contributors?.*", RegexOption.IGNORE_CASE)) &&
+                !line.matches(Regex("^\\[?Текст песни.*\\]?$", RegexOption.IGNORE_CASE))
             }
             .map { LyricLine(text = it) }
     }
@@ -965,8 +1393,9 @@ object GeniusLyricsFetcher {
             if (referer.isNotBlank()) {
                 builder.header("Referer", referer)
             }
-            val response = client.newCall(builder.build()).execute()
-            if (response.isSuccessful) response.body?.string() else null
+            client.newCall(builder.build()).execute().use { response ->
+                if (response.isSuccessful) response.body?.string() else null
+            }
         } catch (e: Exception) {
             null
         }
@@ -987,12 +1416,28 @@ object GeniusLyricsFetcher {
         return raw.replace(Regex("\\d*Embed$"), "")
             .replace(Regex("You might also like.*?\n", RegexOption.IGNORE_CASE), "")
             .replace(Regex("^\\d+\\s+Contributors?.*?\n", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("^\\[?Текст песни.*?\n", RegexOption.IGNORE_CASE), "")
             .replace(Regex("^(Lyrics|Текст песни).*?\n", RegexOption.IGNORE_CASE), "")
             .trim()
     }
 
     private fun sanitizeKey(key: String): String =
         key.lowercase().replace('ё', 'е').replace(Regex("[^a-z0-9а-я]"), "_")
+
+    private fun cleanOldCaches(context: Context) {
+        if (oldCachesCleaned) return
+        oldCachesCleaned = true
+        try {
+            val cacheDir = File(context.cacheDir, "lyrics")
+            if (!cacheDir.exists()) return
+            cacheDir.listFiles()?.forEach { file ->
+                val name = file.name
+                if (name.startsWith("v1_") || name.startsWith("v2_") || name.startsWith("v3_") || name.startsWith("v4_") || !name.startsWith(CACHE_VERSION)) {
+                    file.delete()
+                }
+            }
+        } catch (_: Exception) {}
+    }
 
     private fun saveDiskCache(context: Context, key: String, result: LyricsResult) {
         if (result.lines.isEmpty() || result.plainLyrics.isBlank() || result.plainLyrics.equals("null", ignoreCase = true)) {
@@ -1007,6 +1452,7 @@ object GeniusLyricsFetcher {
                 put("artist", result.artist)
                 put("plainLyrics", result.plainLyrics)
                 put("sourceUrl", result.sourceUrl)
+                put("geniusUrl", result.geniusUrl)
                 put("isSynced", result.isSynced)
                 put("sourceName", result.sourceName)
                 val linesArray = JSONArray()
@@ -1048,7 +1494,8 @@ object GeniusLyricsFetcher {
                 plainLyrics = json.optCleanString("plainLyrics"),
                 sourceUrl = json.optCleanString("sourceUrl"),
                 isSynced = json.optBoolean("isSynced", false),
-                sourceName = json.optCleanString("sourceName").ifBlank { "Кэш" }
+                sourceName = json.optCleanString("sourceName").ifBlank { "Кэш" },
+                geniusUrl = json.optCleanString("geniusUrl")
             )
         } catch (e: Exception) {
             null

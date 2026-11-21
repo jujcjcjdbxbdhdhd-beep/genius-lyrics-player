@@ -15,6 +15,7 @@ import android.util.DisplayMetrics
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -29,11 +30,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
 import com.satulin.geniuslyrics.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONTokener
 import java.net.URLEncoder
 
 class MainActivity : AppCompatActivity() {
@@ -53,13 +56,18 @@ class MainActivity : AppCompatActivity() {
     private var activeTitle: String = ""
     private var activeArtist: String = ""
     private var activeRawTitle: String = ""
+    private var activeArtistFromTitle: Boolean = false
     private var currentLyricsResult: LyricsResult? = null
     private var lyricsLines: List<LyricLine> = emptyList()
+    private var displayedLines: List<LyricLine> = emptyList()
 
     private var isMediaPlaying = false
     private var lastKnownPositionMs = 0L
     private var totalDurationMs = 0L
     private var lastUpdateTimeSystem = 0L
+    private var manualSyncOffsetMs = 0L
+    private var virtualPositionMs = 0L
+    private var isManualSearchMode = false
 
     private val trackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -68,13 +76,14 @@ class MainActivity : AppCompatActivity() {
                     val title = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_TITLE))
                     val artist = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_ARTIST))
                     val rawTitle = MediaNotificationListener.sanitizeText(intent.getStringExtra(MediaNotificationListener.EXTRA_RAW_TITLE))
+                    val artistFromTitle = intent.getBooleanExtra(MediaNotificationListener.EXTRA_ARTIST_FROM_TITLE, false)
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, 0L)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
 
                     updatePlaybackTime(pos, dur, updated, isPlaying)
-                    onTrackUpdated(title, artist, rawTitle, isPlaying)
+                    onTrackUpdated(title, artist, rawTitle, artistFromTitle, isPlaying)
                 }
                 MediaNotificationListener.ACTION_PLAYBACK_STATE -> {
                     val isPlaying = intent.getBooleanExtra(MediaNotificationListener.EXTRA_IS_PLAYING, true)
@@ -84,6 +93,7 @@ class MainActivity : AppCompatActivity() {
 
                     updatePlaybackTime(pos, dur, updated, isPlaying)
                     updatePlayStatusBadge(isPlaying)
+                    updateProgressUI()
                 }
             }
         }
@@ -102,10 +112,21 @@ class MainActivity : AppCompatActivity() {
     private fun setupRecyclerView() {
         layoutManager = LinearLayoutManager(this)
         binding.rvLyrics.layoutManager = layoutManager
+        (binding.rvLyrics.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
 
         lyricsAdapter = LyricsAdapter { clickedPosition ->
             isUserManuallyScrolling = false
             binding.btnSyncCurrentLine.visibility = View.GONE
+            reSyncJob?.cancel()
+
+            val tappedTime = displayedLines.getOrNull(clickedPosition)?.timeMs ?: -1L
+            if (tappedTime >= 0L) {
+                if (!isManualSearchMode && totalDurationMs > 0L) {
+                    manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
+                } else {
+                    virtualPositionMs = tappedTime
+                }
+            }
             selectLine(clickedPosition, smoothScroll = true, force = true)
         }
         lyricsAdapter.fontSizeSp = currentFontSizeSp
@@ -162,9 +183,12 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(trackReceiver, filter)
         }
 
+        MediaNotificationListener.refreshActiveTrack()
+
         val currentTitle = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentTitle)
         val currentArtist = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentArtist)
         val currentRawTitle = MediaNotificationListener.sanitizeText(MediaNotificationListener.currentRawTitle)
+        val currentArtistFromTitle = MediaNotificationListener.currentArtistFromTitle
 
         if (currentTitle.isNotBlank()) {
             updatePlaybackTime(
@@ -177,6 +201,7 @@ class MainActivity : AppCompatActivity() {
                 currentTitle,
                 currentArtist,
                 if (currentRawTitle.isNotBlank()) currentRawTitle else currentTitle,
+                currentArtistFromTitle,
                 MediaNotificationListener.isPlaying
             )
         }
@@ -186,7 +211,7 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         try {
             unregisterReceiver(trackReceiver)
-        } catch (ignored: Exception) {}
+        } catch (_: Exception) {}
     }
 
     private fun checkPermissions() {
@@ -211,13 +236,13 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSpeedDown.setOnClickListener {
             if (scrollSpeedFactor > 0.5f) {
-                scrollSpeedFactor -= 0.25f
+                scrollSpeedFactor = (scrollSpeedFactor - 0.25f).coerceAtLeast(0.5f)
                 updateSpeedLabel()
             }
         }
         binding.btnSpeedUp.setOnClickListener {
             if (scrollSpeedFactor < 3.0f) {
-                scrollSpeedFactor += 0.25f
+                scrollSpeedFactor = (scrollSpeedFactor + 0.25f).coerceAtMost(3.0f)
                 updateSpeedLabel()
             }
         }
@@ -238,6 +263,9 @@ class MainActivity : AppCompatActivity() {
         binding.btnScrollToTop.setOnClickListener {
             isUserManuallyScrolling = false
             binding.btnSyncCurrentLine.visibility = View.GONE
+            reSyncJob?.cancel()
+            manualSyncOffsetMs = 0L
+            virtualPositionMs = 0L
             selectLine(0, smoothScroll = true, force = true)
         }
 
@@ -251,8 +279,35 @@ class MainActivity : AppCompatActivity() {
             } else false
         }
 
+        binding.btnRefreshLyrics.setOnClickListener {
+            if (activeTitle.isNotBlank()) {
+                Toast.makeText(this, "Обновляем текст...", Toast.LENGTH_SHORT).show()
+                manualSyncOffsetMs = 0L
+                virtualPositionMs = 0L
+                loadLyrics(
+                    artist = activeArtist,
+                    title = activeTitle,
+                    rawTitle = activeRawTitle,
+                    artistFromTitle = activeArtistFromTitle,
+                    forceRefresh = true
+                )
+            } else {
+                MediaNotificationListener.refreshActiveTrack()
+                Toast.makeText(this, "Проверяем активный плеер...", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         binding.btnToggleFloating.setOnClickListener {
             toggleFloatingLyrics()
+        }
+
+        binding.btnModeLyrics.setOnClickListener {
+            if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
+                binding.webViewGeniusPage.stopLoading()
+                binding.layoutGeniusWebView.visibility = View.GONE
+            }
+            val target = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
+            selectLine(target, smoothScroll = true, force = true)
         }
 
         binding.btnOpenGeniusWeb.setOnClickListener {
@@ -267,20 +322,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updatePlaybackTime(positionMs: Long, durationMs: Long, updatedAt: Long, playing: Boolean) {
-        lastKnownPositionMs = positionMs
-        if (durationMs > 0) {
+        lastKnownPositionMs = positionMs.coerceAtLeast(0L)
+        if (durationMs > 0L) {
             totalDurationMs = durationMs
         }
-        lastUpdateTimeSystem = if (updatedAt > 0) updatedAt else SystemClock.elapsedRealtime()
+        lastUpdateTimeSystem = if (updatedAt > 0L) updatedAt else SystemClock.elapsedRealtime()
         isMediaPlaying = playing
     }
 
     private fun getCurrentTrackPosition(): Long {
         if (!isMediaPlaying || lastUpdateTimeSystem == 0L) {
-            return lastKnownPositionMs
+            return lastKnownPositionMs.coerceAtLeast(0L)
         }
-        val elapsed = SystemClock.elapsedRealtime() - lastUpdateTimeSystem
-        return lastKnownPositionMs + elapsed
+        val elapsed = (SystemClock.elapsedRealtime() - lastUpdateTimeSystem).coerceAtLeast(0L)
+        val raw = lastKnownPositionMs + elapsed
+        return if (totalDurationMs > 0L) raw.coerceAtMost(totalDurationMs) else raw
+    }
+
+    private fun updateProgressUI() {
+        if (isManualSearchMode) return
+        val currentMs = getCurrentTrackPosition()
+        binding.tvCurrentTime.text = formatTime(currentMs)
+        if (totalDurationMs > 0L) {
+            binding.tvTotalTime.text = formatTime(totalDurationMs)
+            val progress = ((currentMs.toDouble() / totalDurationMs) * 1000).toInt().coerceIn(0, 1000)
+            binding.pbTrackProgress.progress = progress
+        } else {
+            binding.tvTotalTime.text = "--:--"
+            binding.pbTrackProgress.progress = 0
+        }
     }
 
     private fun toggleAutoScroll() {
@@ -301,24 +371,51 @@ class MainActivity : AppCompatActivity() {
         scrollJob = lifecycleScope.launch {
             while (isActive && isAutoScrolling) {
                 if (lyricsLines.isNotEmpty()) {
-                    val isSynced = currentLyricsResult?.isSynced == true
+                    updateProgressUI()
 
-                    // Update Spotify time counters & progress bar
-                    val currentMs = getCurrentTrackPosition()
-                    binding.tvCurrentTime.text = formatTime(currentMs)
-                    if (totalDurationMs > 0) {
-                        binding.tvTotalTime.text = formatTime(totalDurationMs)
-                        val progress = ((currentMs.toDouble() / totalDurationMs) * 1000).toInt().coerceIn(0, 1000)
-                        binding.pbTrackProgress.progress = progress
+                    // Upgrade to weighted timestamps smoothly once duration becomes known
+                    val isSynced = currentLyricsResult?.isSynced == true
+                    if (!isSynced && !isManualSearchMode && totalDurationMs > 10_000L && displayedLines.firstOrNull()?.timeMs == -1L) {
+                        displayedLines = GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs)
                     }
 
-                    if (isSynced && isMediaPlaying) {
+                    val canAdvance = isMediaPlaying || isManualSearchMode
+                    if (canAdvance) {
+                        val timelineLines: List<LyricLine>
+                        val effectiveMs: Long
+
+                        if (!isManualSearchMode && totalDurationMs > 10_000L) {
+                            timelineLines = if ((displayedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
+                                displayedLines
+                            } else {
+                                GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs).also {
+                                    displayedLines = it
+                                }
+                            }
+                            effectiveMs = (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
+                        } else {
+                            val virtualDur = (lyricsLines.size * 2800L).coerceAtLeast(30_000L)
+                            timelineLines = if ((displayedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
+                                displayedLines
+                            } else {
+                                GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, virtualDur).also {
+                                    displayedLines = it
+                                }
+                            }
+                            virtualPositionMs += (100f * scrollSpeedFactor).toLong().coerceAtLeast(10L)
+                            val lastTs = timelineLines.lastOrNull()?.timeMs ?: virtualDur
+                            if (virtualPositionMs > lastTs + 3000L) {
+                                virtualPositionMs = 0L
+                            }
+                            effectiveMs = virtualPositionMs
+                        }
+
                         var bestIndex = -1
-                        for (i in lyricsLines.indices) {
-                            val lineTime = lyricsLines[i].timeMs
-                            if (lineTime in 0..currentMs) {
+                        for (i in timelineLines.indices) {
+                            val lineTime = timelineLines[i].timeMs
+                            if (lineTime in 0..effectiveMs) {
                                 bestIndex = i
-                            } else if (lineTime > currentMs) {
+                            } else if (lineTime > effectiveMs) {
                                 break
                             }
                         }
@@ -326,39 +423,16 @@ class MainActivity : AppCompatActivity() {
                         if (bestIndex != -1 && bestIndex != lyricsAdapter.activeLineIndex) {
                             selectLine(bestIndex, smoothScroll = true)
                         }
-
-                        delay(90)
-                    } else {
-                        // Smooth auto-scroll for unsynced tracks
-                        val currentIndex = lyricsAdapter.activeLineIndex
-                        val nextIndex = if (currentIndex + 1 < lyricsLines.size) currentIndex + 1 else 0
-
-                        val currentLine = lyricsLines.getOrNull(currentIndex)?.text ?: ""
-                        val wordsCount = currentLine.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
-                        val baseDelay = when {
-                            currentLine.startsWith("[") -> 1600L
-                            wordsCount <= 3 -> 2200L
-                            wordsCount <= 6 -> 3000L
-                            wordsCount <= 10 -> 3800L
-                            else -> 4600L
-                        }
-
-                        val adjustedDelay = (baseDelay / scrollSpeedFactor).toLong().coerceIn(600L, 7000L)
-                        delay(adjustedDelay)
-
-                        if (!isActive || !isAutoScrolling) break
-                        selectLine(nextIndex, smoothScroll = true)
                     }
-                } else {
-                    delay(400)
                 }
+                delay(100)
             }
         }
     }
 
     // Spotify smooth center gliding scroll
     private fun selectLine(position: Int, smoothScroll: Boolean, force: Boolean = false) {
-        if (position < 0 || position >= lyricsLines.size) return
+        if (position < 0 || position >= displayedLines.size) return
         lyricsAdapter.activeLineIndex = position
 
         if ((!isUserManuallyScrolling || force) && smoothScroll) {
@@ -395,7 +469,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onTrackUpdated(title: String, artist: String, rawTitle: String, isPlaying: Boolean) {
+    private fun onTrackUpdated(
+        title: String,
+        artist: String,
+        rawTitle: String,
+        artistFromTitle: Boolean = false,
+        isPlaying: Boolean
+    ) {
         val cleanTitle = MediaNotificationListener.sanitizeText(title)
         val cleanArtist = MediaNotificationListener.sanitizeText(artist)
         val cleanRaw = MediaNotificationListener.sanitizeText(rawTitle)
@@ -403,22 +483,28 @@ class MainActivity : AppCompatActivity() {
         if (cleanTitle.isBlank()) return
         updatePlayStatusBadge(isPlaying)
 
-        if (cleanTitle == activeTitle && cleanArtist == activeArtist) {
+        if (cleanTitle == activeTitle && cleanArtist == activeArtist && !isManualSearchMode) {
             return
         }
+
+        isManualSearchMode = false
+        manualSyncOffsetMs = 0L
+        virtualPositionMs = 0L
 
         activeTitle = cleanTitle
         activeArtist = cleanArtist
         activeRawTitle = cleanRaw
+        activeArtistFromTitle = artistFromTitle
 
         binding.tvSongTitle.text = cleanTitle
         binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
+        updateProgressUI()
 
         if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
             openGeniusWeb()
         }
 
-        loadLyrics(cleanArtist, cleanTitle, cleanRaw)
+        loadLyrics(cleanArtist, cleanTitle, cleanRaw, artistFromTitle)
     }
 
     private fun performManualSearch() {
@@ -436,26 +522,57 @@ class MainActivity : AppCompatActivity() {
         val targetArtist = parsed.artist
         val targetTitle = if (parsed.title.isNotBlank()) parsed.title else query
 
+        isManualSearchMode = true
+        manualSyncOffsetMs = 0L
+        virtualPositionMs = 0L
+        totalDurationMs = 0L
+        lastKnownPositionMs = 0L
+
+        activeTitle = targetTitle
+        activeArtist = targetArtist
+        activeRawTitle = query
+        activeArtistFromTitle = parsed.artistFromTitle
+
         binding.tvSongTitle.text = targetTitle
-        binding.tvSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Spotify / Genius"
+        binding.tvSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Genius / Spotify"
         binding.tvStatusBadge.text = "● ПОИСК"
         binding.tvStatusBadge.setTextColor(Color.parseColor("#1DB954"))
+        binding.tvCurrentTime.text = "00:00"
+        binding.tvTotalTime.text = "--:--"
+        binding.pbTrackProgress.progress = 0
 
-        loadLyrics(targetArtist, targetTitle, query)
+        loadLyrics(targetArtist, targetTitle, query, parsed.artistFromTitle)
     }
 
-    private fun loadLyrics(artist: String, title: String, rawTitle: String) {
+    private fun loadLyrics(
+        artist: String,
+        title: String,
+        rawTitle: String,
+        artistFromTitle: Boolean = false,
+        forceRefresh: Boolean = false
+    ) {
         lyricsLoadJob?.cancel()
+        displayedLines = emptyList()
+        lyricsLines = emptyList()
+        currentLyricsResult = null
+
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
         binding.btnPlaceholderGeniusWeb.visibility = View.GONE
-        binding.tvLyricsPlaceholder.text = "Ищем текст в Spotify, Genius, NetEase и QQ Music..."
+        binding.tvLyricsPlaceholder.text = "Ищем текст на Genius и в базе караоке..."
         binding.rvLyrics.visibility = View.GONE
         binding.btnSyncCurrentLine.visibility = View.GONE
         isUserManuallyScrolling = false
 
         lyricsLoadJob = lifecycleScope.launch {
-            val result = GeniusLyricsFetcher.getLyrics(applicationContext, artist, title, rawTitle)
+            val result = GeniusLyricsFetcher.getLyrics(
+                context = applicationContext,
+                artist = artist,
+                title = title,
+                rawTitle = rawTitle,
+                artistFromTitle = artistFromTitle,
+                forceRefresh = forceRefresh
+            )
             if (!isActive) return@launch
             binding.progressBar.visibility = View.GONE
 
@@ -467,7 +584,12 @@ class MainActivity : AppCompatActivity() {
                 binding.rvLyrics.visibility = View.VISIBLE
 
                 lyricsLines = lyricsResult.lines
-                lyricsAdapter.submitLines(lyricsLines)
+                displayedLines = if (!lyricsResult.isSynced && !isManualSearchMode && totalDurationMs > 10_000L) {
+                    GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs)
+                } else {
+                    lyricsLines
+                }
+                lyricsAdapter.submitLines(displayedLines)
                 selectLine(0, smoothScroll = false, force = true)
 
                 binding.tvSourceBadge.text = lyricsResult.sourceName
@@ -485,6 +607,10 @@ class MainActivity : AppCompatActivity() {
                 binding.tvSongTitle.text = displayTitle
                 binding.tvSongArtist.text = displayArtist
 
+                if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
+                    updateJumpToGeniusBanner()
+                }
+
                 if (isAutoScrolling) {
                     startAutoScrollLoop()
                 }
@@ -494,30 +620,73 @@ class MainActivity : AppCompatActivity() {
                 binding.tvLyricsPlaceholder.visibility = View.VISIBLE
                 binding.btnPlaceholderGeniusWeb.visibility = View.VISIBLE
                 val searchedLabel = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" — ")
-                binding.tvLyricsPlaceholder.text = "Текст не найден для «$searchedLabel».\n\nВы можете открыть страницу трека прямо на Genius.com кнопкой ниже."
+                binding.tvLyricsPlaceholder.text = "Текст не найден для «$searchedLabel».\n\nНажмите кнопку ниже — откроется готовый поиск на Genius.com!"
             }
         }
     }
 
-    private fun openGeniusWeb(customQuery: String? = null) {
+    private fun getVerifiedGeniusUrl(): String {
+        val gUrl = currentLyricsResult?.geniusUrl ?: ""
+        if (gUrl.contains("genius.com/", ignoreCase = true) && gUrl.endsWith("-lyrics", ignoreCase = true)) {
+            return gUrl
+        }
+        val src = currentLyricsResult?.sourceUrl ?: ""
+        if (src.contains("genius.com/", ignoreCase = true) && src.endsWith("-lyrics", ignoreCase = true)) {
+            return src
+        }
+        return ""
+    }
+
+    private fun updateJumpToGeniusBanner() {
+        val verifiedUrl = getVerifiedGeniusUrl()
+        val currentLoadedUrl = binding.webViewGeniusPage.url ?: ""
+        val alreadyOnSongPage = currentLoadedUrl.contains("-lyrics", ignoreCase = true)
+        if (verifiedUrl.isNotBlank() && !alreadyOnSongPage) {
+            binding.btnJumpToGeniusSong.visibility = View.VISIBLE
+            binding.btnJumpToGeniusSong.setOnClickListener {
+                openGeniusWeb(directSongUrl = verifiedUrl)
+            }
+        } else {
+            binding.btnJumpToGeniusSong.visibility = View.GONE
+        }
+    }
+
+    private fun updateGeniusWebNavButtons() {
+        val canGoBack = try {
+            binding.webViewGeniusPage.canGoBack()
+        } catch (_: Exception) {
+            false
+        }
+        binding.btnGeniusWebBack.isEnabled = canGoBack
+        binding.btnGeniusWebBack.alpha = if (canGoBack) 1.0f else 0.35f
+    }
+
+    private fun openGeniusWeb(customQuery: String? = null, directSongUrl: String? = null) {
         val query = customQuery?.trim()?.ifBlank { null } ?: run {
-            val candidate = when {
-                activeRawTitle.isNotBlank() -> activeRawTitle
-                activeArtist.isNotBlank() && activeTitle.isNotBlank() -> "$activeArtist $activeTitle"
-                activeTitle.isNotBlank() -> activeTitle
-                else -> binding.tvSongTitle.text?.toString() ?: ""
-            }.replace("Включите песню", "").trim()
-            MediaNotificationListener.stripNoise(candidate).ifBlank { candidate }
-        }.ifBlank { "ROCKET drive home" }
+            MediaNotificationListener.buildGeniusSearchQuery(
+                artist = activeArtist,
+                title = activeTitle,
+                rawTitle = activeRawTitle,
+                artistFromTitle = activeArtistFromTitle
+            )
+        }
 
         binding.etGeniusWebQuery.setText(query)
-        binding.tvGeniusWebTitle.text = "Genius • $query"
+        binding.tvGeniusWebTitle.text = if (query.isNotBlank()) "Genius • $query" else "Genius.com"
         binding.layoutGeniusWebView.visibility = View.VISIBLE
         binding.pbGeniusWeb.visibility = View.VISIBLE
         binding.pbGeniusWeb.progress = 20
+        binding.btnImportFromGeniusWeb.visibility = View.GONE
 
-        val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(query, "UTF-8")
-        binding.webViewGeniusPage.loadUrl(searchUrl)
+        val urlToLoad = when {
+            !directSongUrl.isNullOrBlank() -> directSongUrl
+            query.isNotBlank() -> "https://genius.com/search?q=" + URLEncoder.encode(query, "UTF-8").replace("+", "%20")
+            else -> "https://genius.com/"
+        }
+
+        binding.webViewGeniusPage.loadUrl(urlToLoad)
+        updateJumpToGeniusBanner()
+        updateGeniusWebNavButtons()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -531,22 +700,29 @@ class MainActivity : AppCompatActivity() {
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.cacheMode = WebSettings.LOAD_DEFAULT
-            settings.userAgentString =
-                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+            val defaultUa = settings.userAgentString
+            if (!defaultUa.isNullOrBlank()) {
+                settings.userAgentString = defaultUa.replace("; wv", "")
+            }
+
+            try {
+                val cm = CookieManager.getInstance()
+                cm.setAcceptCookie(true)
+                cm.setAcceptThirdPartyCookies(this, true)
+            } catch (_: Exception) {}
 
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     binding.pbGeniusWeb.progress = newProgress
-                    if (newProgress >= 100) {
-                        binding.pbGeniusWeb.visibility = View.GONE
-                    } else {
-                        binding.pbGeniusWeb.visibility = View.VISIBLE
-                    }
+                    binding.pbGeniusWeb.visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
                 }
 
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     super.onReceivedTitle(view, title)
-                    if (!title.isNullOrBlank() && !title.contains("404", ignoreCase = true) && !title.contains("genius.com", ignoreCase = true)) {
+                    if (!title.isNullOrBlank() &&
+                        !title.contains("404", ignoreCase = true) &&
+                        !title.contains("just a moment", ignoreCase = true)
+                    ) {
                         binding.tvGeniusWebTitle.text = title.replace("| Genius", "").trim()
                     }
                 }
@@ -555,24 +731,34 @@ class MainActivity : AppCompatActivity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val url = request?.url?.toString() ?: return false
-                    if (url.contains("genius.com", ignoreCase = true)) {
+                    val lower = url.lowercase()
+                    if (lower.contains("genius.com") || lower.contains("cloudflare.com")) {
                         return false
                     }
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    } catch (ignored: Exception) {}
+                    if (request?.hasGesture() == true) {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        } catch (_: Exception) {}
+                    }
                     return true
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    updateGeniusWebNavButtons()
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     binding.pbGeniusWeb.visibility = View.GONE
+                    updateGeniusWebNavButtons()
+                    updateJumpToGeniusBanner()
 
-                    // Inject current query into any search input on genius.com
+                    // Inject query into any empty search box on genius.com
                     val currentQ = binding.etGeniusWebQuery.text?.toString()?.trim() ?: ""
                     if (currentQ.isNotBlank()) {
                         val escapedQ = currentQ.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
-                        val js = """
+                        val fillJs = """
                             (function() {
                                 var q = "$escapedQ";
                                 var inputs = document.querySelectorAll('input[name="q"], input[type="search"]');
@@ -583,7 +769,22 @@ class MainActivity : AppCompatActivity() {
                                 }
                             })();
                         """.trimIndent()
-                        view?.evaluateJavascript(js, null)
+                        view?.evaluateJavascript(fillJs, null)
+                    }
+
+                    // Show "Import this lyrics into player" floating pill on any Genius song page
+                    val isLikelySongUrl = !url.isNullOrBlank() &&
+                        url.contains("genius.com/", ignoreCase = true) &&
+                        url.substringBefore("?").endsWith("-lyrics", ignoreCase = true)
+                    if (isLikelySongUrl) {
+                        binding.btnImportFromGeniusWeb.visibility = View.VISIBLE
+                    } else {
+                        view?.evaluateJavascript(
+                            "(function(){ return document.querySelectorAll('div[data-lyrics-container=\"true\"]').length > 0 ? '1' : '0'; })()"
+                        ) { res ->
+                            val hasContainers = res?.contains("1") == true
+                            binding.btnImportFromGeniusWeb.visibility = if (hasContainers) View.VISIBLE else View.GONE
+                        }
                     }
                 }
 
@@ -598,11 +799,17 @@ class MainActivity : AppCompatActivity() {
                     if (statusCode == 404 && request?.isForMainFrame == true && reqUrl.endsWith("-lyrics")) {
                         val q = binding.etGeniusWebQuery.text?.toString()?.trim() ?: ""
                         if (q.isNotBlank()) {
-                            val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(q, "UTF-8")
+                            val searchUrl = "https://genius.com/search?q=" + URLEncoder.encode(q, "UTF-8").replace("+", "%20")
                             view?.loadUrl(searchUrl)
                         }
                     }
                 }
+            }
+        }
+
+        binding.btnGeniusWebBack.setOnClickListener {
+            if (binding.webViewGeniusPage.canGoBack()) {
+                binding.webViewGeniusPage.goBack()
             }
         }
 
@@ -611,7 +818,7 @@ class MainActivity : AppCompatActivity() {
             if (q.isNotBlank()) {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                 imm?.hideSoftInputFromWindow(binding.etGeniusWebQuery.windowToken, 0)
-                openGeniusWeb(q)
+                openGeniusWeb(customQuery = q)
             }
         }
 
@@ -621,10 +828,57 @@ class MainActivity : AppCompatActivity() {
                 if (q.isNotBlank()) {
                     val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
                     imm?.hideSoftInputFromWindow(binding.etGeniusWebQuery.windowToken, 0)
-                    openGeniusWeb(q)
+                    openGeniusWeb(customQuery = q)
                 }
                 true
             } else false
+        }
+
+        binding.btnImportFromGeniusWeb.setOnClickListener {
+            binding.webViewGeniusPage.evaluateJavascript(GeniusWebViewFetcher.EXTRACT_LYRICS_JS) { rawJs ->
+                val rawText = try {
+                    if (rawJs == null || rawJs == "null") "" else (JSONTokener(rawJs).nextValue() as? String ?: "")
+                } catch (_: Exception) {
+                    rawJs?.trim('"') ?: ""
+                }
+
+                val songUrl = binding.webViewGeniusPage.url ?: ""
+                val imported = GeniusLyricsFetcher.parseManualGeniusLyrics(
+                    title = activeTitle.ifBlank { binding.tvGeniusWebTitle.text?.toString() ?: "" },
+                    artist = activeArtist,
+                    rawLyrics = rawText,
+                    geniusUrl = songUrl
+                )
+
+                if (imported != null && imported.lines.isNotEmpty()) {
+                    GeniusLyricsFetcher.saveManualLyricsToCache(
+                        context = applicationContext,
+                        artist = activeArtist,
+                        title = activeTitle,
+                        rawTitle = activeRawTitle,
+                        result = imported
+                    )
+                    currentLyricsResult = imported
+                    lyricsLines = imported.lines
+                    displayedLines = if (!isManualSearchMode && totalDurationMs > 10_000L) {
+                        GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs)
+                    } else {
+                        lyricsLines
+                    }
+                    lyricsAdapter.submitLines(displayedLines)
+                    selectLine(0, smoothScroll = false, force = true)
+                    binding.tvLyricsPlaceholder.visibility = View.GONE
+                    binding.btnPlaceholderGeniusWeb.visibility = View.GONE
+                    binding.rvLyrics.visibility = View.VISIBLE
+                    binding.tvSourceBadge.text = imported.sourceName
+                    binding.webViewGeniusPage.stopLoading()
+                    binding.layoutGeniusWebView.visibility = View.GONE
+                    if (isAutoScrolling) startAutoScrollLoop()
+                    Toast.makeText(this, "Текст с Genius загружен в плеер!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Откройте страницу песни с текстом на Genius", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
 
         binding.btnCloseGeniusWeb.setOnClickListener {
@@ -676,8 +930,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val intent = Intent(this, FloatingLyricsService::class.java)
-        startService(intent)
-        Toast.makeText(this, "Плавающее окно активировано!", Toast.LENGTH_SHORT).show()
+        if (FloatingLyricsService.isRunning) {
+            stopService(intent)
+            Toast.makeText(this, "Плавающее окно выключено", Toast.LENGTH_SHORT).show()
+        } else {
+            startService(intent)
+            Toast.makeText(this, "Плавающее окно включено!", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun formatTime(ms: Long): String {

@@ -1,431 +1,505 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg_main"
-    android:padding="16dp">
+    android:background="@color/bg_main">
 
-    <!-- Notification Access Permission Banner (Shown only if permission missing) -->
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/cardPermission"
+    <!-- Main Player Content -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/layoutMainContent"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="12dp"
-        android:visibility="gone"
-        app:cardBackgroundColor="#2A1715"
-        app:cardCornerRadius="18dp"
-        app:cardElevation="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:strokeColor="#FF5500"
-        app:strokeWidth="1dp">
+        android:layout_height="match_parent"
+        android:padding="14dp">
 
-        <LinearLayout
+        <!-- Notification Access Permission Banner (Shown only if permission missing) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardPermission"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:layout_marginBottom="10dp"
+            android:visibility="gone"
+            app:cardBackgroundColor="#2A1715"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="0dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:strokeColor="#FF5500"
+            app:strokeWidth="1dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Доступ к уведомлениям"
-                android:textColor="#FF7A33"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:orientation="vertical"
+                android:padding="14dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Доступ к уведомлениям"
+                    android:textColor="#FF7A33"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Разрешите доступ, чтобы автоматически считывать треки из SoundCloud, Spotify и других плееров."
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnGrantPermission"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_marginTop="8dp"
+                    android:backgroundTint="#FF5500"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="Предоставить доступ"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="19dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Top Spotify Card: Now Playing Track Info & Progress -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardNowPlaying"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/bg_card"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:layout_constraintTop_toBottomOf="@id/cardPermission"
+            app:strokeColor="@color/border_subtle"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="Разрешите доступ, чтобы автоматически считывать треки из SoundCloud, Spotify и других плееров."
-                android:textColor="@color/text_secondary"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <!-- Clean Status Badges + Refresh & Floating Icons (never overflows) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvStatusBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/pill_background"
+                            android:maxLines="1"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="4dp"
+                            android:text="● ОЖИДАНИЕ"
+                            android:textColor="@color/text_muted"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvSourceBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:background="@drawable/pill_background"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="4dp"
+                            android:text="Genius / Spotify"
+                            android:textColor="@color/accent_spotify"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRefreshLyrics"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:contentDescription="Обновить текст"
+                        app:icon="@android:drawable/ic_menu_rotate"
+                        app:iconTint="@color/text_secondary" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleFloating"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:contentDescription="Плавающее окно"
+                        app:icon="@android:drawable/ic_menu_crop"
+                        app:iconTint="@color/accent_spotify" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvSongTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-black"
+                    android:maxLines="2"
+                    android:text="Включите песню"
+                    android:textColor="@color/text_primary"
+                    android:textSize="21sp" />
+
+                <TextView
+                    android:id="@+id/tvSongArtist"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="SoundCloud • Spotify • VK • Яндекс"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp" />
+
+                <!-- Spotify Progress Bar & Track Timings -->
+                <ProgressBar
+                    android:id="@+id/pbTrackProgress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="10dp"
+                    android:max="1000"
+                    android:progress="0"
+                    android:progressBackgroundTint="#333333"
+                    android:progressTint="@color/accent_spotify" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvCurrentTime"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="00:00"
+                        android:textColor="@color/text_muted"
+                        android:textSize="11sp" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/tvTotalTime"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="--:--"
+                        android:textColor="@color/text_muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Dedicated Two-Button Mode Switch Bar -->
+        <LinearLayout
+            android:id="@+id/layoutModeSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/cardNowPlaying">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnModeLyrics"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:backgroundTint="@color/accent_spotify"
+                android:ellipsize="end"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:maxLines="1"
+                android:paddingHorizontal="8dp"
+                android:text="🎵 Текст (Караоке)"
+                android:textColor="#000000"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                app:cornerRadius="20dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnOpenGeniusWeb"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:backgroundTint="#FFFF64"
+                android:ellipsize="end"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:maxLines="1"
+                android:paddingHorizontal="8dp"
+                android:text="Поиск на Genius"
+                android:textColor="#000000"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                app:cornerRadius="20dp"
+                app:icon="@android:drawable/ic_menu_search"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp"
+                app:iconSize="15dp"
+                app:iconTint="#000000" />
+        </LinearLayout>
+
+        <!-- Sleek Spotify Search Bar -->
+        <LinearLayout
+            android:id="@+id/layoutSearch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toBottomOf="@id/layoutModeSwitch">
+
+            <EditText
+                android:id="@+id/etSearchQuery"
+                android:layout_width="0dp"
+                android:layout_height="42dp"
+                android:layout_weight="1"
+                android:background="@drawable/pill_background"
+                android:hint="Поиск трека со Spotify или Genius…"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:paddingHorizontal="16dp"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_muted"
                 android:textSize="13sp" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnGrantPermission"
+                android:id="@+id/btnManualSearch"
                 android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginTop="8dp"
-                android:backgroundTint="#FF5500"
-                android:text="Предоставить доступ"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
+                android:layout_height="42dp"
+                android:layout_marginStart="8dp"
+                android:backgroundTint="@color/accent_spotify"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Найти"
+                android:textColor="#000000"
                 android:textStyle="bold"
-                app:cornerRadius="19dp" />
+                app:cornerRadius="21dp" />
         </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
 
-    <!-- Top Spotify Card: Now Playing Track Info & Progress -->
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/cardNowPlaying"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        app:cardBackgroundColor="@color/bg_card"
-        app:cardCornerRadius="20dp"
-        app:cardElevation="0dp"
-        app:layout_constraintTop_toBottomOf="@id/cardPermission"
-        app:strokeColor="@color/border_subtle"
-        app:strokeWidth="1dp">
-
+        <!-- Interactive Auto-Scroll & Controls Bar -->
         <LinearLayout
+            android:id="@+id/layoutControls"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:layout_marginTop="8dp"
+            android:background="@drawable/card_background"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="5dp"
+            app:layout_constraintTop_toBottomOf="@id/layoutSearch">
 
-            <!-- Status Badges row -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnToggleScroll"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:backgroundTint="@color/bg_chip"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="⏸ Пауза"
+                android:textColor="@color/accent_spotify"
+                android:textSize="12sp"
+                app:cornerRadius="17dp" />
 
-                <TextView
-                    android:id="@+id/tvStatusBadge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/pill_background"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
-                    android:text="● ОЖИДАНИЕ ТРЕКА"
-                    android:textColor="@color/text_muted"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvSourceBadge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/pill_background"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
-                    android:text="Spotify Lyrics"
-                    android:textColor="@color/accent_spotify"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <!-- Genius Web button -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOpenGeniusWeb"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:layout_marginEnd="6dp"
-                    android:backgroundTint="#FFFF64"
-                    android:text="Текст на Genius"
-                    android:textColor="#000000"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    app:cornerRadius="18dp"
-                    app:icon="@android:drawable/ic_menu_search"
-                    app:iconSize="14dp"
-                    app:iconTint="#000000" />
-
-                <!-- Floating overlay icon -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnToggleFloating"
-                    style="@style/Widget.Material3.Button.IconButton"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
-                    app:icon="@android:drawable/ic_menu_crop"
-                    app:iconTint="@color/accent_spotify" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/tvSongTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:ellipsize="end"
-                android:fontFamily="sans-serif-black"
-                android:maxLines="2"
-                android:text="Включите песню"
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSpeedDown"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="4dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:padding="0dp"
+                android:text="-"
                 android:textColor="@color/text_primary"
-                android:textSize="22sp" />
+                android:textSize="18sp" />
 
             <TextView
-                android:id="@+id/tvSongArtist"
-                android:layout_width="match_parent"
+                android:id="@+id/tvSpeed"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:text="SoundCloud • Spotify • VK • Яндекс"
+                android:text="1.0x"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSpeedUp"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:padding="0dp"
+                android:text="+"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp" />
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFontDown"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:padding="0dp"
+                android:text="A-"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFontUp"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:padding="0dp"
+                android:text="A+"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
 
-            <!-- Spotify Progress Bar & Track Timings -->
-            <ProgressBar
-                android:id="@+id/pbTrackProgress"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="match_parent"
-                android:layout_height="4dp"
-                android:layout_marginTop="12dp"
-                android:max="1000"
-                android:progress="0"
-                android:progressTint="@color/accent_spotify"
-                android:progressBackgroundTint="#333333" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnScrollToTop"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                app:icon="@android:drawable/arrow_up_float"
+                app:iconTint="@color/text_secondary" />
+        </LinearLayout>
 
-            <LinearLayout
+        <!-- Spotify Lyrics View Container -->
+        <FrameLayout
+            android:id="@+id/layoutLyricsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/card_background"
+            android:padding="8dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/layoutControls">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvLyrics"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingTop="32dp"
+                android:paddingBottom="160dp"
+                android:scrollbars="none" />
+
+            <ProgressBar
+                android:id="@+id/progressBar"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:indeterminateTint="@color/accent_spotify"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvLyricsPlaceholder"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:orientation="horizontal">
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:padding="24dp"
+                android:text="Включите любую песню в SoundCloud или Spotify, и текст появится здесь."
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp" />
 
-                <TextView
-                    android:id="@+id/tvCurrentTime"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="00:00"
-                    android:textColor="@color/text_muted"
-                    android:textSize="11sp" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPlaceholderGeniusWeb"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_gravity="center_horizontal|bottom"
+                android:layout_marginBottom="44dp"
+                android:backgroundTint="#FFFF64"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Открыть поиск на Genius.com"
+                android:textColor="#000000"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:cornerRadius="22dp"
+                app:icon="@android:drawable/ic_menu_search"
+                app:iconTint="#000000" />
 
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
+            <!-- Floating Spotify Return-To-Sync Pill (appears when manually scrolling) -->
+            <TextView
+                android:id="@+id/btnSyncCurrentLine"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="20dp"
+                android:background="@drawable/pill_sync"
+                android:elevation="8dp"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="10dp"
+                android:text="● К ТЕКУЩЕЙ СТРОКЕ"
+                android:textColor="#000000"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
 
-                <TextView
-                    android:id="@+id/tvTotalTime"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="--:--"
-                    android:textColor="@color/text_muted"
-                    android:textSize="11sp" />
-            </LinearLayout>
+        </FrameLayout>
 
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Sleek Spotify Search Bar -->
-    <LinearLayout
-        android:id="@+id/layoutSearch"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        app:layout_constraintTop_toBottomOf="@id/cardNowPlaying">
-
-        <EditText
-            android:id="@+id/etSearchQuery"
-            android:layout_width="0dp"
-            android:layout_height="44dp"
-            android:layout_weight="1"
-            android:background="@drawable/pill_background"
-            android:hint="Поиск трека со Spotify или Genius…"
-            android:imeOptions="actionSearch"
-            android:inputType="text"
-            android:paddingHorizontal="16dp"
-            android:textColor="@color/text_primary"
-            android:textColorHint="@color/text_muted"
-            android:textSize="13sp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnManualSearch"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:backgroundTint="@color/accent_spotify"
-            android:text="Найти"
-            android:textColor="#000000"
-            android:textStyle="bold"
-            app:cornerRadius="22dp" />
-    </LinearLayout>
-
-    <!-- Interactive Auto-Scroll & Controls Bar -->
-    <LinearLayout
-        android:id="@+id/layoutControls"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:background="@drawable/card_background"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="6dp"
-        app:layout_constraintTop_toBottomOf="@id/layoutSearch">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnToggleScroll"
-            style="@style/Widget.Material3.Button.TonalButton"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:backgroundTint="@color/bg_chip"
-            android:text="⏸ Пауза"
-            android:textColor="@color/accent_spotify"
-            android:textSize="12sp"
-            app:cornerRadius="18dp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSpeedDown"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:layout_marginStart="4dp"
-            android:text="-"
-            android:textColor="@color/text_primary"
-            android:textSize="18sp" />
-
-        <TextView
-            android:id="@+id/tvSpeed"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="1.0x"
-            android:textColor="@color/text_primary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSpeedUp"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:text="+"
-            android:textColor="@color/text_primary"
-            android:textSize="18sp" />
-
-        <View
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnFontDown"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:text="A-"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnFontUp"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:text="A+"
-            android:textColor="@color/text_secondary"
-            android:textSize="14sp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnScrollToTop"
-            style="@style/Widget.Material3.Button.IconButton"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            app:icon="@android:drawable/arrow_up_float"
-            app:iconTint="@color/text_secondary" />
-    </LinearLayout>
-
-    <!-- Spotify Lyrics View Container -->
-    <FrameLayout
-        android:id="@+id/layoutLyricsContainer"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="10dp"
-        android:background="@drawable/card_background"
-        android:padding="8dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/layoutControls">
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvLyrics"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingTop="32dp"
-            android:paddingBottom="160dp"
-            android:scrollbars="none" />
-
-        <ProgressBar
-            android:id="@+id/progressBar"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:indeterminateTint="@color/accent_spotify"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/tvLyricsPlaceholder"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:gravity="center"
-            android:padding="28dp"
-            android:text="Включите любую песню в SoundCloud или Spotify, и текст появится здесь."
-            android:textColor="@color/text_secondary"
-            android:textSize="15sp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnPlaceholderGeniusWeb"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_gravity="center_horizontal|bottom"
-            android:layout_marginBottom="72dp"
-            android:backgroundTint="#FFFF64"
-            android:text="Открыть на сайте Genius"
-            android:textColor="#000000"
-            android:textStyle="bold"
-            app:cornerRadius="22dp"
-            app:icon="@android:drawable/ic_menu_search"
-            app:iconTint="#000000"
-            android:visibility="gone" />
-
-        <!-- Floating Spotify Return-To-Sync Pill (appears when manually scrolling) -->
-        <TextView
-            android:id="@+id/btnSyncCurrentLine"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="24dp"
-            android:background="@drawable/pill_sync"
-            android:elevation="8dp"
-            android:paddingHorizontal="20dp"
-            android:paddingVertical="10dp"
-            android:text="● К ТЕКУЩЕЙ СТРОКЕ"
-            android:textColor="#000000"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
-
-    </FrameLayout>
-
-    <!-- In-App Genius Web Browser Sheet -->
+    <!-- Full-Screen Edge-To-Edge In-App Genius Web Browser -->
     <LinearLayout
         android:id="@+id/layoutGeniusWebView"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:background="@drawable/card_background"
+        android:layout_height="match_parent"
+        android:background="#121212"
         android:clickable="true"
         android:elevation="24dp"
         android:focusable="true"
         android:orientation="vertical"
-        android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        android:visibility="gone">
 
-        <!-- Browser Header Bar with Dedicated Search Bar -->
+        <!-- Browser Header Bar with Back, Title, Reload, External, Close + Search Box -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#202020"
+            android:background="#181818"
             android:orientation="vertical"
             android:paddingHorizontal="10dp"
             android:paddingTop="8dp"
             android:paddingBottom="8dp">
 
-            <!-- Top Row: Close, Status Title, Reload, External Browser -->
+            <!-- Row 1: Web Back, Title, Reload, Open in Browser, Close -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="40dp"
@@ -433,22 +507,29 @@
                 android:orientation="horizontal">
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCloseGeniusWeb"
-                    style="@style/Widget.Material3.Button.IconButton"
+                    android:id="@+id/btnGeniusWebBack"
+                    style="@style/Widget.Material3.Button.TextButton"
                     android:layout_width="38dp"
                     android:layout_height="38dp"
-                    app:icon="@android:drawable/ic_menu_close_clear_cancel"
-                    app:iconTint="#FFFFFF" />
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:padding="0dp"
+                    android:text="←"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tvGeniusWebTitle"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
+                    android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="Genius.com — Поиск"
+                    android:text="Genius.com"
                     android:textColor="#FFFF64"
                     android:textSize="14sp"
                     android:textStyle="bold" />
@@ -456,21 +537,32 @@
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnReloadGeniusWeb"
                     style="@style/Widget.Material3.Button.IconButton"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:contentDescription="Обновить"
                     app:icon="@android:drawable/ic_menu_rotate"
                     app:iconTint="#B3B3B3" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnExternalBrowserGenius"
                     style="@style/Widget.Material3.Button.IconButton"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:contentDescription="Открыть в браузере"
                     app:icon="@android:drawable/ic_menu_compass"
                     app:iconTint="#FFFF64" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCloseGeniusWeb"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:contentDescription="Закрыть"
+                    app:icon="@android:drawable/ic_menu_close_clear_cancel"
+                    app:iconTint="#FFFFFF" />
             </LinearLayout>
 
-            <!-- Search Bar Row: Pre-filled with playing track & interactive -->
+            <!-- Row 2: Pre-filled Search Bar -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="40dp"
@@ -498,6 +590,8 @@
                     android:layout_height="38dp"
                     android:layout_marginStart="6dp"
                     android:backgroundTint="#FFFF64"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
                     android:text="Найти"
                     android:textColor="#000000"
                     android:textSize="12sp"
@@ -505,6 +599,25 @@
                     app:cornerRadius="19dp" />
             </LinearLayout>
 
+            <!-- Quick-Jump Chip to Exact Found Song Page -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnJumpToGeniusSong"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:layout_marginTop="6dp"
+                android:backgroundTint="#2D2B14"
+                android:ellipsize="end"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
+                android:text="⚡ Открыть страницу трека напрямую →"
+                android:textColor="#FFFF64"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:cornerRadius="16dp" />
         </LinearLayout>
 
         <ProgressBar
@@ -515,10 +628,36 @@
             android:indeterminateTint="#FFFF64"
             android:progressTint="#FFFF64" />
 
-        <WebView
-            android:id="@+id/webViewGeniusPage"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <WebView
+                android:id="@+id/webViewGeniusPage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- Floating 1-Tap Import Button (appears on Genius song pages) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnImportFromGeniusWeb"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_gravity="bottom|center_horizontal"
+                android:layout_marginBottom="20dp"
+                android:backgroundTint="@color/accent_spotify"
+                android:elevation="12dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingHorizontal="20dp"
+                android:text="⚡ Загрузить этот текст в плеер"
+                android:textColor="#000000"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:cornerRadius="22dp" />
+        </FrameLayout>
+
     </LinearLayout>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+</FrameLayout>

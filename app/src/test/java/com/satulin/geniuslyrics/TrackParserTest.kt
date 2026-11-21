@@ -187,4 +187,76 @@ class TrackParserTest {
         assertEquals("", MediaNotificationListener.sanitizeText("undefined"))
         assertEquals("", MediaNotificationListener.sanitizeText(null))
     }
+
+    @Test
+    fun testGeniusBilingualAndCollabMatching() {
+        // Genius titles append English translations in parentheses
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Пули", "Пули (Bullets)"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("В темноте", "В темноте (In the Dark)"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Инкассатор", "Инкассатор (Collector)"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Бандит", "Бандит (Bandit)"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Сделать Это", "Сделать Это (To Do This)"))
+        assertTrue(GeniusLyricsFetcher.isTitleMatch("Море", "Море (Remix) (Sea)"))
+
+        // Prefix match with parentheticals stripped
+        assertTrue(GeniusLyricsFetcher.isTitleWordPrefixMatch("Заново", "Заново завоевать (Again Reconquer)"))
+        assertFalse(GeniusLyricsFetcher.isTitleWordPrefixMatch("И", "Иногда"))
+
+        // Strict artist & title rejection of unrelated hits (Yandex bug regression check)
+        assertFalse(GeniusLyricsFetcher.isArtistMatch("ROCKET", "Rocket From The Crypt"))
+        assertFalse(GeniusLyricsFetcher.isArtistMatch("Face", "Poker Face"))
+        assertFalse(GeniusLyricsFetcher.isTitleMatch("Пули", "Bring Us Bullets"))
+
+        // Bilingual & featured collab artist matching
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("Платина", "Платина (Platina) (Ft. BUSHIDO ZHO)"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("163ONMYNECK", "Scally Milano (Ft. 163ONMYNECK)"))
+        assertTrue(GeniusLyricsFetcher.isArtistMatch("BUSHIDO ZHO", "Платина (Platina) (Ft. BUSHIDO ZHO)"))
+    }
+
+    @Test
+    fun testGeniusSearchQueryBuilderAndNewAliases() {
+        assertEquals(
+            "ROCKET пули",
+            MediaNotificationListener.buildGeniusSearchQuery("ROCKET", "пули", "рокет пули", artistFromTitle = true)
+        )
+        assertEquals(
+            "ROCKET Пули",
+            MediaNotificationListener.buildGeniusSearchQuery("ROCKET", "Пули", "Пули", artistFromTitle = false)
+        )
+        assertEquals(
+            "Инкассатор",
+            MediaNotificationListener.buildGeniusSearchQuery("sliv_trekov_52", "Инкассатор", "Инкассатор", artistFromTitle = false)
+        )
+        assertEquals(
+            "ROCKET drive home",
+            MediaNotificationListener.buildGeniusSearchQuery("ROCKET", "drive home", "🔥 рокет drive home (slowed + reverb) 💀", artistFromTitle = true)
+        )
+
+        // New artist aliases & Russian/year noise stripping
+        assertEquals("LILDRUGHILL", MediaNotificationListener.parseTrack("лилдрагхилл - test", "").artist)
+        assertEquals("madk1d", MediaNotificationListener.parseTrack("мадкид трек [слив] [2024]", "").artist)
+        assertEquals("трек", MediaNotificationListener.stripNoise("трек [слив] (2024)"))
+    }
+
+    @Test
+    fun testEstimateLineTimestamps() {
+        val rawLines = listOf(
+            LyricLine(text = "[Интро]"),
+            LyricLine(text = "Эти дни летят как пули, слушай"),
+            LyricLine(text = "Время дурит, эту дурь не юзай"),
+            LyricLine(text = "Это пропаганда плохой жизни")
+        )
+        val durationMs = 180_000L
+        val timed = GeniusLyricsFetcher.estimateLineTimestamps(rawLines, durationMs)
+        assertEquals(rawLines.size, timed.size)
+        for (i in timed.indices) {
+            assertTrue("Timestamp must be >= 0", timed[i].timeMs >= 0L)
+            assertTrue("Timestamp must be <= duration", timed[i].timeMs <= durationMs)
+            if (i > 0) {
+                assertTrue("Timestamps must be monotonic", timed[i].timeMs >= timed[i - 1].timeMs)
+            }
+        }
+        assertTrue("Intro offset respected", timed.first().timeMs >= 2000L)
+        assertTrue("Outro offset respected", timed.last().timeMs < durationMs - 5000L)
+    }
 }
