@@ -1,30 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Spotify Signature Dark Aesthetics -->
-    <color name="bg_main">#121212</color>
-    <color name="bg_card">#181818</color>
-    <color name="bg_surface">#222222</color>
-    <color name="bg_chip">#282828</color>
-    
-    <!-- Spotify Green Accents -->
-    <color name="accent_primary">#1DB954</color>
-    <color name="accent_spotify">#1DB954</color>
-    <color name="accent_spotify_bright">#1ED760</color>
+    <!-- Obsidian Glass Aesthetics -->
+    <color name="bg_main">#06080B</color>
+    <color name="bg_card">#11161E</color>
+    <color name="bg_surface">#171D27</color>
+    <color name="bg_chip">#1C2330</color>
+
+    <!-- Neon Emerald & Electric Cyan Accents -->
+    <color name="accent_primary">#1ED760</color>
+    <color name="accent_spotify">#1ED760</color>
+    <color name="accent_spotify_bright">#39FF88</color>
+    <color name="accent_cyan">#00D4FF</color>
     <color name="accent_soundcloud">#FF5500</color>
     <color name="accent_yellow">#FFE600</color>
-    <color name="genius_yellow">#1DB954</color>
-    
+    <color name="genius_yellow">#1ED760</color>
+
     <!-- Razor Sharp Text Colors (No Blur, High Contrast) -->
     <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#B3B3B3</color>
-    <color name="text_muted">#72777D</color>
-    <color name="lyric_inactive">#72777D</color>
+    <color name="text_secondary">#9DA7B5</color>
+    <color name="text_muted">#677182</color>
+    <color name="lyric_inactive">#6A7382</color>
     <color name="lyric_active">#FFFFFF</color>
-    <color name="border_subtle">#282828</color>
-    
+    <color name="border_subtle">#263040</color>
+
     <!-- Compatibility aliases -->
-    <color name="overlay_background">#E6181818</color>
-    <color name="overlay_window">#E6181818</color>
-    <color name="surface_variant">#282828</color>
-    <color name="divider_color">#282828</color>
+    <color name="overlay_background">#F5070A0F</color>
+    <color name="overlay_window">#FA090D14</color>
+    <color name="surface_variant">#1C2330</color>
+    <color name="divider_color">#263040</color>
 </resources>

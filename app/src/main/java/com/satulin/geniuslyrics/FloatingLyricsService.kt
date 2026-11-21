@@ -91,7 +91,8 @@ class FloatingLyricsService : Service() {
 
     private var currentState: IslandState = IslandState.COMPACT
     private var currentStyle: IslandAnimStyle = IslandAnimStyle.FLY_IN
-    private var isKaraokeEnabled: Boolean = true
+    private var displayMode: LyricsDisplayMode = LyricsDisplayMode.KARAOKE
+    private var lastOverlayWordKey: Long = -1L
     private var compactUsingA: Boolean = true
     private var expandedUsingA: Boolean = true
     private var compactSwapGen: Int = 0
@@ -171,9 +172,9 @@ class FloatingLyricsService : Service() {
                 }
                 AppMotionPrefs.ACTION_PREFS_CHANGED -> {
                     currentStyle = AppMotionPrefs.getIslandStyle(this@FloatingLyricsService)
-                    isKaraokeEnabled = AppMotionPrefs.isKaraokeEnabled(this@FloatingLyricsService)
+                    displayMode = AppMotionPrefs.getDisplayMode(this@FloatingLyricsService)
                     updateStyleChipsUI()
-                    applyKaraokeModeUI()
+                    applyDisplayModeUI()
                 }
             }
         }
@@ -244,7 +245,7 @@ class FloatingLyricsService : Service() {
         overlayView = LayoutInflater.from(themedContext).inflate(R.layout.overlay_lyrics, null)
 
         currentStyle = AppMotionPrefs.getIslandStyle(this)
-        isKaraokeEnabled = AppMotionPrefs.isKaraokeEnabled(this)
+        displayMode = AppMotionPrefs.getDisplayMode(this)
 
         setupIslandViewsAndListeners()
 
@@ -396,13 +397,13 @@ class FloatingLyricsService : Service() {
         }
 
         btnOverlayKaraoke?.setOnClickListener {
-            isKaraokeEnabled = !isKaraokeEnabled
-            AppMotionPrefs.setKaraokeEnabled(this, isKaraokeEnabled)
+            displayMode = LyricsDisplayMode.nextMode(displayMode)
+            AppMotionPrefs.setDisplayMode(this, displayMode)
             root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-            applyKaraokeModeUI()
+            applyDisplayModeUI()
             Toast.makeText(
                 this,
-                if (isKaraokeEnabled) "Режим: Караоке" else "Режим: Просто текст",
+                "Режим: ${displayMode.label}",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -414,7 +415,7 @@ class FloatingLyricsService : Service() {
         btnStyleTypewriter?.setOnClickListener { selectStyle(IslandAnimStyle.TYPEWRITER) }
 
         updateStyleChipsUI()
-        applyKaraokeModeUI()
+        applyDisplayModeUI()
     }
 
     private fun selectStyle(style: IslandAnimStyle) {
@@ -451,12 +452,12 @@ class FloatingLyricsService : Service() {
             IslandAnimStyle.ELASTIC_POP to root.findViewById<TextView>(R.id.btnStylePop),
             IslandAnimStyle.TYPEWRITER to root.findViewById<TextView>(R.id.btnStyleTypewriter)
         )
-        val activeFill = Color.parseColor("#143520")
-        val activeStroke = Color.parseColor("#1DB954")
-        val activeText = Color.parseColor("#1ED760")
-        val idleFill = Color.parseColor("#222222")
-        val idleStroke = Color.parseColor("#323232")
-        val idleText = Color.parseColor("#A6ACB2")
+        val activeFill = Color.parseColor("#183E28")
+        val activeStroke = Color.parseColor("#39FF88")
+        val activeText = Color.parseColor("#39FF88")
+        val idleFill = Color.parseColor("#161D28")
+        val idleStroke = Color.parseColor("#283447")
+        val idleText = Color.parseColor("#9DA7B5")
 
         for ((style, tv) in chipMap) {
             if (tv == null) continue
@@ -469,7 +470,7 @@ class FloatingLyricsService : Service() {
         }
     }
 
-    private fun applyKaraokeModeUI() {
+    private fun applyDisplayModeUI() {
         val root = overlayView ?: return
         val btnKaraoke = root.findViewById<TextView>(R.id.btnOverlayKaraoke)
         val layoutLive = root.findViewById<View>(R.id.layoutOverlayLive)
@@ -479,23 +480,35 @@ class FloatingLyricsService : Service() {
         val btnSyncFwd = root.findViewById<View>(R.id.btnOverlaySyncFwd)
         val btnScroll = root.findViewById<View>(R.id.btnOverlayScroll)
 
-        if (isKaraokeEnabled) {
-            btnKaraoke?.text = "🎤 Караоке"
-            btnKaraoke?.background = makeChipDrawable(
-                Color.parseColor("#143520"),
-                Color.parseColor("#1DB954")
-            )
-            btnKaraoke?.setTextColor(Color.parseColor("#1ED760"))
-        } else {
-            btnKaraoke?.text = "📄 Текст"
-            btnKaraoke?.background = makeChipDrawable(
-                Color.parseColor("#2A2A2A"),
-                Color.parseColor("#4A4A4A")
-            )
-            btnKaraoke?.setTextColor(Color.WHITE)
+        when (displayMode) {
+            LyricsDisplayMode.KARAOKE -> {
+                btnKaraoke?.text = "🎤 Караоке"
+                btnKaraoke?.background = makeChipDrawable(
+                    Color.parseColor("#143520"),
+                    Color.parseColor("#1DB954")
+                )
+                btnKaraoke?.setTextColor(Color.parseColor("#39FF88"))
+            }
+            LyricsDisplayMode.WORD_BY_WORD -> {
+                btnKaraoke?.text = "✨ По словам"
+                btnKaraoke?.background = makeChipDrawable(
+                    Color.parseColor("#103038"),
+                    Color.parseColor("#00D4FF")
+                )
+                btnKaraoke?.setTextColor(Color.parseColor("#5CEEFF"))
+            }
+            LyricsDisplayMode.PLAIN_TEXT -> {
+                btnKaraoke?.text = "📄 Текст"
+                btnKaraoke?.background = makeChipDrawable(
+                    Color.parseColor("#232A36"),
+                    Color.parseColor("#4A5668")
+                )
+                btnKaraoke?.setTextColor(Color.WHITE)
+            }
         }
 
-        val karaokeVis = if (isKaraokeEnabled) View.VISIBLE else View.GONE
+        val isKaraokeActive = (displayMode != LyricsDisplayMode.PLAIN_TEXT)
+        val karaokeVis = if (isKaraokeActive) View.VISIBLE else View.GONE
         layoutLive?.visibility = karaokeVis
         dividerLive?.visibility = karaokeVis
         scrollChips?.visibility = karaokeVis
@@ -503,7 +516,9 @@ class FloatingLyricsService : Service() {
         btnSyncFwd?.visibility = karaokeVis
         btnScroll?.visibility = karaokeVis
 
-        if (!isKaraokeEnabled) {
+        lastOverlayWordKey = -1L
+
+        if (!isKaraokeActive) {
             val plainLabel = if (currentTitle.isNotBlank()) {
                 val trackLabel = if (currentArtist.isNotBlank()) "$currentArtist — $currentTitle" else currentTitle
                 "♪ $trackLabel"
@@ -514,13 +529,13 @@ class FloatingLyricsService : Service() {
             renderPlainOverlayLines()
             updateNotificationContent()
         } else if (currentLines.isNotEmpty()) {
+            val targetIdx = activeIndex.coerceAtLeast(0).coerceAtMost(currentLines.lastIndex)
+            applyHighlight(targetIdx, scroll = true, animateSwap = false)
             recalculateActiveLineNow(advanceVirtual = false)
-            if (activeIndex < 0) {
-                applyHighlight(0, scroll = true, animateSwap = false)
-            } else {
-                applyHighlight(activeIndex, scroll = true, animateSwap = false)
-            }
             updateNotificationContent()
+        }
+        if (isAutoScrolling) {
+            startSyncLoop()
         }
     }
 
@@ -708,13 +723,13 @@ class FloatingLyricsService : Service() {
         when (currentState) {
             IslandState.COMPACT -> {
                 targetView = root.findViewById(R.id.layoutIslandCompact)
-                fillColor = Color.parseColor("#F7000000")
-                restStroke = Color.parseColor("#2E2E2E")
+                fillColor = Color.parseColor("#F5070A0F")
+                restStroke = Color.parseColor("#2C3544")
             }
             IslandState.EXPANDED -> {
                 targetView = root.findViewById(R.id.layoutIslandExpanded)
-                fillColor = Color.parseColor("#FA0A0A0A")
-                restStroke = Color.parseColor("#323232")
+                fillColor = Color.parseColor("#FA090D14")
+                restStroke = Color.parseColor("#2E394A")
             }
             IslandState.MINI -> return
         }
@@ -722,7 +737,7 @@ class FloatingLyricsService : Service() {
         borderGlowAnimator = MotionUtils.createBorderGlowAnimator(
             view = targetView,
             fillColor = fillColor,
-            glowColor = Color.parseColor("#1ED760"),
+            glowColor = Color.parseColor("#39FF88"),
             restStrokeColor = restStroke,
             cornerRadiusPx = dp(28).toFloat(),
             restStrokeWidthPx = dp(1).coerceAtLeast(1),
@@ -806,7 +821,7 @@ class FloatingLyricsService : Service() {
             "Живой остров активен"
         }
 
-        val lineText = if (!isKaraokeEnabled && currentTitle.isNotBlank()) {
+        val lineText = if (displayMode == LyricsDisplayMode.PLAIN_TEXT && currentTitle.isNotBlank()) {
             "Режим: Просто текст"
         } else if (activeIndex in currentLines.indices) {
             currentLines[activeIndex].text
@@ -904,8 +919,9 @@ class FloatingLyricsService : Service() {
         tvTitle?.text = cleanTitle
         tvSub?.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
         tvMini?.text = "♪ $cleanTitle"
+        lastOverlayWordKey = -1L
         setCompactTextAnimated(
-            if (isKaraokeEnabled) "Поиск: $cleanTitle…" else "♪ $cleanTitle",
+            if (displayMode != LyricsDisplayMode.PLAIN_TEXT) "Поиск: $cleanTitle…" else "♪ $cleanTitle",
             animateSwap = false
         )
         setExpandedTextAnimated("Поиск текста...", animateSwap = false)
@@ -945,7 +961,7 @@ class FloatingLyricsService : Service() {
                 tvSub?.text = if (dispArtist.isNotBlank()) "$dispArtist • ${lyricsResult.sourceName}" else lyricsResult.sourceName
                 tvMini?.text = "♪ $dispTitle"
 
-                if (!isKaraokeEnabled) {
+                if (displayMode == LyricsDisplayMode.PLAIN_TEXT) {
                     val trackLabel = if (dispArtist.isNotBlank()) "$dispArtist — $dispTitle" else dispTitle
                     setCompactTextAnimated("♪ $trackLabel", animateSwap = false)
                     renderPlainOverlayLines()
@@ -1025,36 +1041,38 @@ class FloatingLyricsService : Service() {
         scrollJob?.cancel()
         scrollJob = scope.launch {
             while (isActive && isAutoScrolling) {
+                val tickDelayMs = if (displayMode == LyricsDisplayMode.WORD_BY_WORD) 55L else 140L
                 updateProgressViews()
-                if (isKaraokeEnabled && currentLines.isNotEmpty() && isMediaPlaying) {
-                    recalculateActiveLineNow(advanceVirtual = true)
+                if (displayMode != LyricsDisplayMode.PLAIN_TEXT && currentLines.isNotEmpty() && isMediaPlaying) {
+                    recalculateActiveLineNow(advanceVirtual = true, tickStepMs = tickDelayMs)
                 }
-                delay(150)
+                delay(tickDelayMs)
             }
         }
     }
 
-    private fun recalculateActiveLineNow(advanceVirtual: Boolean = false) {
-        if (!isKaraokeEnabled || currentLines.isEmpty()) return
+    private fun recalculateActiveLineNow(advanceVirtual: Boolean = false, tickStepMs: Long = 150L) {
+        if (displayMode == LyricsDisplayMode.PLAIN_TEXT || currentLines.isEmpty()) return
 
         if (!isSyncedSource && totalDurationMs > 10_000L && syncedLines.firstOrNull()?.timeMs == -1L) {
             syncedLines = GeniusLyricsFetcher.estimateLineTimestamps(currentLines, totalDurationMs)
         }
 
+        val virtualDur = (currentLines.size * 2800L).coerceAtLeast(30_000L)
         val timeline = if ((syncedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
             syncedLines
         } else {
-            val virtualDur = (currentLines.size * 2800L).coerceAtLeast(30_000L)
             GeniusLyricsFetcher.estimateLineTimestamps(currentLines, virtualDur).also {
                 syncedLines = it
             }
         }
 
+        val effectiveDur = if (totalDurationMs > 10_000L) totalDurationMs else virtualDur
         val effectiveMs = if (totalDurationMs > 10_000L) {
             (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
         } else {
             if (advanceVirtual) {
-                virtualPositionMs += 150L
+                virtualPositionMs += tickStepMs
             }
             val lastTs = timeline.lastOrNull()?.timeMs ?: 30_000L
             if (virtualPositionMs > lastTs + 3000L) virtualPositionMs = 0L
@@ -1072,8 +1090,51 @@ class FloatingLyricsService : Service() {
         }
 
         if (bestIdx != -1 && bestIdx != activeIndex) {
+            lastOverlayWordKey = -1L
             applyHighlight(bestIdx, scroll = true, animateSwap = true)
         }
+
+        if (displayMode == LyricsDisplayMode.WORD_BY_WORD && activeIndex in timeline.indices) {
+            if (currentStyle == IslandAnimStyle.TYPEWRITER &&
+                (compactTypeJob?.isActive == true || expandedTypeJob?.isActive == true)
+            ) {
+                return
+            }
+            val beat = WordTimingEngine.computeBeatState(timeline, activeIndex, effectiveMs, effectiveDur)
+            if (beat != null) {
+                val wordCode = if (beat.isCompleted) 0xFFFFL else beat.activeWordIndex.toLong()
+                val wordKey = (activeIndex.toLong() shl 20) or wordCode
+                if (wordKey != lastOverlayWordKey) {
+                    lastOverlayWordKey = wordKey
+                    applyOverlayWordBeat(activeIndex, beat)
+                }
+            }
+        }
+    }
+
+    private fun applyOverlayWordBeat(idx: Int, beat: WordTimingEngine.WordBeatState) {
+        val root = overlayView ?: return
+        val lineText = currentLines.getOrNull(idx)?.text ?: return
+        val trimmed = lineText.trim()
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) return
+
+        val span = MotionUtils.buildWordBeatSpannable(lineText, beat)
+
+        val compactActive = if (compactUsingA) {
+            root.findViewById<TextView>(R.id.tvCompactLyricA)
+        } else {
+            root.findViewById<TextView>(R.id.tvCompactLyricB)
+        }
+        compactActive?.text = span
+
+        val expandedActive = if (expandedUsingA) {
+            root.findViewById<TextView>(R.id.tvOverlayCurrentA)
+        } else {
+            root.findViewById<TextView>(R.id.tvOverlayCurrentB)
+        }
+        expandedActive?.text = span
+
+        overlayLineViews.getOrNull(idx)?.text = span
     }
 
     private fun resetStageView(tv: TextView?) {
@@ -1182,9 +1243,9 @@ class FloatingLyricsService : Service() {
         when (currentStyle) {
             IslandAnimStyle.FLY_IN -> {
                 outgoing?.animate()
-                    ?.translationY(-dp(24).toFloat())
+                    ?.translationY(-dp(30).toFloat())
                     ?.alpha(0f)
-                    ?.rotationX(-14f)
+                    ?.rotationX(-24f)
                     ?.setDuration(180L)
                     ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
                     ?.withEndAction {
@@ -1197,14 +1258,14 @@ class FloatingLyricsService : Service() {
 
                 incoming.text = newText
                 incoming.alpha = 0f
-                incoming.translationY = dp(24).toFloat()
-                incoming.rotationX = 18f
+                incoming.translationY = dp(30).toFloat()
+                incoming.rotationX = 28f
                 incoming.animate()
                     .translationY(0f)
                     .rotationX(0f)
                     .alpha(1f)
-                    .setDuration(300L)
-                    .setInterpolator(MotionUtils.SPRING_OVERSHOOT)
+                    .setDuration(340L)
+                    .setInterpolator(MotionUtils.SPRING_SNAPPY)
                     .withEndAction { incoming.isSelected = true }
                     .start()
                 if (isCompact) pulseIslandBorder()
@@ -1214,8 +1275,8 @@ class FloatingLyricsService : Service() {
             IslandAnimStyle.FADE -> {
                 outgoing?.animate()
                     ?.alpha(0f)
-                    ?.translationY(-dp(3).toFloat())
-                    ?.setDuration(170L)
+                    ?.translationY(-dp(4).toFloat())
+                    ?.setDuration(190L)
                     ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
                     ?.withEndAction {
                         if (generationCheck()) {
@@ -1227,12 +1288,12 @@ class FloatingLyricsService : Service() {
 
                 incoming.text = newText
                 incoming.alpha = 0f
-                incoming.translationY = dp(4).toFloat()
+                incoming.translationY = dp(5).toFloat()
                 incoming.animate()
                     .alpha(1f)
                     .translationY(0f)
-                    .setDuration(320L)
-                    .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    .setDuration(420L)
+                    .setInterpolator(MotionUtils.EASE_OUT_QUINT)
                     .withEndAction { incoming.isSelected = true }
                     .start()
                 return null
@@ -1240,7 +1301,7 @@ class FloatingLyricsService : Service() {
 
             IslandAnimStyle.SLIDE_KINETIC -> {
                 outgoing?.animate()
-                    ?.translationX(-dp(48).toFloat())
+                    ?.translationX(-dp(64).toFloat())
                     ?.alpha(0f)
                     ?.setDuration(170L)
                     ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
@@ -1254,12 +1315,12 @@ class FloatingLyricsService : Service() {
 
                 incoming.text = newText
                 incoming.alpha = 0f
-                incoming.translationX = dp(48).toFloat()
+                incoming.translationX = dp(64).toFloat()
                 incoming.animate()
                     .translationX(0f)
                     .alpha(1f)
-                    .setDuration(280L)
-                    .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                    .setDuration(300L)
+                    .setInterpolator(MotionUtils.SPRING_CRISP)
                     .withEndAction { incoming.isSelected = true }
                     .start()
                 if (isCompact) pulseIslandBorder()
@@ -1268,9 +1329,9 @@ class FloatingLyricsService : Service() {
 
             IslandAnimStyle.ELASTIC_POP -> {
                 outgoing?.animate()
-                    ?.scaleX(0.85f)
-                    ?.scaleY(0.85f)
-                    ?.translationY(-dp(8).toFloat())
+                    ?.scaleX(0.78f)
+                    ?.scaleY(0.78f)
+                    ?.translationY(-dp(10).toFloat())
                     ?.alpha(0f)
                     ?.setDuration(160L)
                     ?.setInterpolator(MotionUtils.EASE_OUT_CUBIC)
@@ -1284,16 +1345,16 @@ class FloatingLyricsService : Service() {
 
                 incoming.text = newText
                 incoming.alpha = 0f
-                incoming.scaleX = 0.82f
-                incoming.scaleY = 0.82f
-                incoming.translationY = dp(8).toFloat()
+                incoming.scaleX = 0.76f
+                incoming.scaleY = 0.76f
+                incoming.translationY = dp(12).toFloat()
                 incoming.animate()
                     .scaleX(1.0f)
                     .scaleY(1.0f)
                     .translationY(0f)
                     .alpha(1f)
-                    .setDuration(320L)
-                    .setInterpolator(MotionUtils.SPRING_JUICY)
+                    .setDuration(360L)
+                    .setInterpolator(MotionUtils.SPRING_BOUNCY)
                     .withEndAction { incoming.isSelected = true }
                     .start()
                 if (isCompact) pulseIslandBorder()
@@ -1409,9 +1470,17 @@ class FloatingLyricsService : Service() {
                 lastUpdateTimeSystem = now
                 updateProgressViews()
                 overlayView?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                if (isKaraokeEnabled) {
+                if (displayMode != LyricsDisplayMode.PLAIN_TEXT) {
+                    lastOverlayWordKey = -1L
                     applyHighlight(idx, scroll = true, animateSwap = true)
                     pulseIslandBorder()
+                    if (displayMode == LyricsDisplayMode.WORD_BY_WORD) {
+                        val timeline = if (syncedLines.size == currentLines.size) syncedLines else currentLines
+                        val beat = WordTimingEngine.computeBeatState(timeline, idx, tappedTime, effectiveDur)
+                        if (beat != null) {
+                            applyOverlayWordBeat(idx, beat)
+                        }
+                    }
                 }
                 updateNotificationContent()
                 return
@@ -1419,7 +1488,8 @@ class FloatingLyricsService : Service() {
                 virtualPositionMs = tappedTime
             }
         }
-        if (isKaraokeEnabled) {
+        if (displayMode != LyricsDisplayMode.PLAIN_TEXT) {
+            lastOverlayWordKey = -1L
             applyHighlight(idx, scroll = true, animateSwap = true)
         }
         Toast.makeText(this, "Не удалось перемотать трек", Toast.LENGTH_SHORT).show()
@@ -1431,7 +1501,8 @@ class FloatingLyricsService : Service() {
         if (tappedTime >= 0L && totalDurationMs > 0L) {
             manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
             overlayView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            if (isKaraokeEnabled) {
+            if (displayMode != LyricsDisplayMode.PLAIN_TEXT) {
+                lastOverlayWordKey = -1L
                 applyHighlight(idx, scroll = true, animateSwap = true)
             }
             Toast.makeText(this, "Синхронизация привязана к этой строке", Toast.LENGTH_SHORT).show()
@@ -1446,7 +1517,7 @@ class FloatingLyricsService : Service() {
         val tvNext = root.findViewById<TextView>(R.id.tvOverlayNextLine)
         val scrollView = root.findViewById<NestedScrollView>(R.id.scrollOverlayLyrics)
 
-        if (!isKaraokeEnabled) {
+        if (displayMode == LyricsDisplayMode.PLAIN_TEXT) {
             renderPlainOverlayLines()
             return
         }
@@ -1460,11 +1531,15 @@ class FloatingLyricsService : Service() {
 
         for (i in overlayLineViews.indices) {
             val tv = overlayLineViews[i]
-            val trimmed = currentLines.getOrNull(i)?.text?.trim() ?: ""
+            val lineStr = currentLines.getOrNull(i)?.text ?: ""
+            val trimmed = lineStr.trim()
             val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
+            if (i != idx) {
+                tv.text = lineStr
+            }
             when {
                 isHeader -> {
-                    tv.setTextColor(Color.parseColor("#1DB954"))
+                    tv.setTextColor(Color.parseColor("#39FF88"))
                     tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
                 }
                 i == idx -> {
@@ -1472,11 +1547,11 @@ class FloatingLyricsService : Service() {
                     tv.setTypeface(Typeface.create("sans-serif-black", Typeface.BOLD))
                 }
                 i < idx -> {
-                    tv.setTextColor(Color.parseColor("#5E6368"))
+                    tv.setTextColor(Color.parseColor("#545D6B"))
                     tv.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
                 }
                 else -> {
-                    tv.setTextColor(Color.parseColor("#B3B8BE"))
+                    tv.setTextColor(Color.parseColor("#B3BCC9"))
                     tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
                 }
             }

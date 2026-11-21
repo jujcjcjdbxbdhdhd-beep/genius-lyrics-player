@@ -329,4 +329,69 @@ class TrackParserTest {
             assertTrue(style.shortLabel.isNotBlank())
         }
     }
+
+    @Test
+    fun testWordTimingEngineAndSpringMath() {
+        // 1. LyricsDisplayMode enum & cycling
+        val modes = LyricsDisplayMode.values()
+        assertEquals(3, modes.size)
+        assertEquals(LyricsDisplayMode.KARAOKE, LyricsDisplayMode.fromId("karaoke"))
+        assertEquals(LyricsDisplayMode.WORD_BY_WORD, LyricsDisplayMode.fromId("word"))
+        assertEquals(LyricsDisplayMode.PLAIN_TEXT, LyricsDisplayMode.fromId("plain"))
+        assertEquals(LyricsDisplayMode.KARAOKE, LyricsDisplayMode.fromId(null))
+        assertEquals(LyricsDisplayMode.KARAOKE, LyricsDisplayMode.fromId("invalid"))
+
+        assertEquals(LyricsDisplayMode.WORD_BY_WORD, LyricsDisplayMode.nextMode(LyricsDisplayMode.KARAOKE))
+        assertEquals(LyricsDisplayMode.PLAIN_TEXT, LyricsDisplayMode.nextMode(LyricsDisplayMode.WORD_BY_WORD))
+        assertEquals(LyricsDisplayMode.KARAOKE, LyricsDisplayMode.nextMode(LyricsDisplayMode.PLAIN_TEXT))
+
+        // 2. SpringMath damped harmonic oscillator invariants
+        assertEquals(0f, SpringMath.evaluateSpring(0f, 340f, 0.56f), 0.0001f)
+        assertEquals(1f, SpringMath.evaluateSpring(1f, 340f, 0.56f), 0.0001f)
+        var peakBouncy = 0f
+        for (step in 1..40) {
+            val v = SpringMath.evaluateSpring(step / 40f, 340f, 0.56f)
+            if (v > peakBouncy) peakBouncy = v
+        }
+        assertTrue("Underdamped spring must overshoot 1.0f, got $peakBouncy", peakBouncy > 1.02f)
+
+        var prevDamped = 0f
+        for (step in 1..40) {
+            val v = SpringMath.evaluateSpring(step / 40f, 400f, 1.0f)
+            assertTrue("Critically damped spring stays in [0, 1]", v in 0f..1f)
+            assertTrue("Critically damped spring is monotonic", v >= prevDamped - 0.0001f)
+            prevDamped = v
+        }
+
+        // 3. WordTimingEngine tokenization & punctuation weighting
+        val tokens = WordTimingEngine.tokenizeLine("Эти дни летят, как пули")
+        assertEquals(5, tokens.size)
+        assertEquals("Эти", tokens[0].text)
+        assertEquals(0, tokens[0].start)
+        assertEquals(3, tokens[0].end)
+        assertEquals(0f, tokens.first().startFraction, 0.0001f)
+        assertEquals(1f, tokens.last().endFraction, 0.0001f)
+        for (i in 1 until tokens.size) {
+            assertTrue(tokens[i].startFraction >= tokens[i - 1].endFraction - 0.0001f)
+        }
+
+        // 4. WordTimingEngine beat advancement & gap completion
+        val lines = listOf(
+            LyricLine(timeMs = 5_000L, text = "[Припев]"),
+            LyricLine(timeMs = 10_000L, text = "Раз два три четыре пять"),
+            LyricLine(timeMs = 30_000L, text = "Следующая строчка")
+        )
+        assertEquals(null, WordTimingEngine.computeBeatState(lines, 0, 5_500L, 60_000L))
+
+        val bStart = WordTimingEngine.computeBeatState(lines, 1, 10_050L, 60_000L)!!
+        val bMid = WordTimingEngine.computeBeatState(lines, 1, 11_600L, 60_000L)!!
+        val bGap = WordTimingEngine.computeBeatState(lines, 1, 25_000L, 60_000L)!!
+
+        assertEquals(0, bStart.activeWordIndex)
+        assertFalse(bStart.isCompleted)
+        assertTrue(bMid.activeWordIndex > bStart.activeWordIndex)
+        assertFalse(bMid.isCompleted)
+        assertTrue("Vocal window completes well before 20s instrumental gap", bGap.isCompleted)
+        assertEquals(bGap.tokens.lastIndex, bGap.activeWordIndex)
+    }
 }
