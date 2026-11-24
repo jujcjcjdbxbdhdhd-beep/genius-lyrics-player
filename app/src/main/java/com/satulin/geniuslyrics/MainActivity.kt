@@ -93,6 +93,8 @@ class MainActivity : AppCompatActivity() {
     private var seekIgnoreUntilSystemMs = 0L
     private var displayMode = LyricsDisplayMode.KARAOKE
     private var currentStyle = IslandAnimStyle.FLY_IN
+    private var currentTheme = VibeColorTheme.CYBER_EMERALD
+    private var currentSticker = VibeStickerStyle.VINYL_DISC
     private var eqJob: Job? = null
     private var eqPhase: Double = 0.0
     private var lastBeatWordKey: Long = -1L
@@ -158,10 +160,13 @@ class MainActivity : AppCompatActivity() {
                 AppMotionPrefs.ACTION_PREFS_CHANGED -> {
                     displayMode = AppMotionPrefs.getDisplayMode(this@MainActivity)
                     currentStyle = AppMotionPrefs.getIslandStyle(this@MainActivity)
+                    currentTheme = AppMotionPrefs.getColorTheme(this@MainActivity)
+                    currentSticker = AppMotionPrefs.getStickerStyle(this@MainActivity)
                     manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
                     updateSyncOffsetLabel()
                     lyricsAdapter.displayMode = displayMode
                     lyricsAdapter.motionStyle = currentStyle
+                    applyVibeThemeAndStickerUI(triggerBurst = false)
                     applyDisplayModeUI(animate = true)
                     updateMainStyleChipsUI()
                 }
@@ -177,10 +182,13 @@ class MainActivity : AppCompatActivity() {
 
         displayMode = AppMotionPrefs.getDisplayMode(this)
         currentStyle = AppMotionPrefs.getIslandStyle(this)
+        currentTheme = AppMotionPrefs.getColorTheme(this)
+        currentSticker = AppMotionPrefs.getStickerStyle(this)
         manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
         setupRecyclerView()
         setupUI()
         updateSyncOffsetLabel()
+        applyVibeThemeAndStickerUI(triggerBurst = false)
         applyDisplayModeUI(animate = false)
         updateMainStyleChipsUI()
         checkPermissions()
@@ -357,10 +365,13 @@ class MainActivity : AppCompatActivity() {
         updateIslandButtonState()
         displayMode = AppMotionPrefs.getDisplayMode(this)
         currentStyle = AppMotionPrefs.getIslandStyle(this)
+        currentTheme = AppMotionPrefs.getColorTheme(this)
+        currentSticker = AppMotionPrefs.getStickerStyle(this)
         manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
         updateSyncOffsetLabel()
         lyricsAdapter.displayMode = displayMode
         lyricsAdapter.motionStyle = currentStyle
+        applyVibeThemeAndStickerUI(triggerBurst = false)
         applyDisplayModeUI(animate = false)
         updateMainStyleChipsUI()
 
@@ -592,6 +603,27 @@ class MainActivity : AppCompatActivity() {
         binding.mainStylePop.setOnClickListener { selectMotionStyle(IslandAnimStyle.ELASTIC_POP) }
         binding.mainStyleTypewriter.setOnClickListener { selectMotionStyle(IslandAnimStyle.TYPEWRITER) }
 
+        binding.btnMainTheme.setOnClickListener { cycleColorTheme() }
+        binding.btnWordPageTheme.setOnClickListener { cycleColorTheme() }
+
+        binding.chipStickerVinyl.setOnClickListener { selectStickerStyle(VibeStickerStyle.VINYL_DISC) }
+        binding.chipStickerFire.setOnClickListener { selectStickerStyle(VibeStickerStyle.FIRE_DROP) }
+        binding.chipStickerCat.setOnClickListener { selectStickerStyle(VibeStickerStyle.CYBER_CAT) }
+        binding.chipStickerHeart.setOnClickListener { selectStickerStyle(VibeStickerStyle.NEON_HEART) }
+        binding.chipStickerBolt.setOnClickListener { selectStickerStyle(VibeStickerStyle.LIGHTNING_BASS) }
+        binding.chipStickerCrown.setOnClickListener { selectStickerStyle(VibeStickerStyle.STAR_CROWN) }
+
+        binding.frameWordHeroStage.setOnClickListener {
+            binding.frameWordHeroStage.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            binding.wordStageVisualizer.triggerStickerBurst(7)
+            binding.ambientAura.triggerPulse(0.95f)
+        }
+        binding.tvWordPageCurrentLine.setOnClickListener {
+            binding.tvWordPageCurrentLine.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            binding.wordStageVisualizer.triggerStickerBurst(6)
+            binding.ambientAura.triggerPulse(0.85f)
+        }
+
         binding.btnOpenGeniusWeb.setOnClickListener {
             openGeniusWeb()
         }
@@ -613,6 +645,7 @@ class MainActivity : AppCompatActivity() {
             binding.mainStyleSlide,
             binding.mainStylePop,
             binding.mainStyleTypewriter,
+            binding.btnMainTheme,
             binding.btnSyncBackMain,
             binding.tvSyncOffsetMain,
             binding.btnSyncFwdMain,
@@ -629,6 +662,13 @@ class MainActivity : AppCompatActivity() {
             binding.btnPlaceholderGeniusWeb,
             binding.btnWordPageBack,
             binding.btnWordPageStyle,
+            binding.btnWordPageTheme,
+            binding.chipStickerVinyl,
+            binding.chipStickerFire,
+            binding.chipStickerCat,
+            binding.chipStickerHeart,
+            binding.chipStickerBolt,
+            binding.chipStickerCrown,
             binding.btnWordPagePrevLine,
             binding.btnWordPageNextLine,
             binding.btnWordPageSyncBack,
@@ -658,6 +698,71 @@ class MainActivity : AppCompatActivity() {
         binding.scrollMainStyles.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         binding.ambientAura.triggerPulse(1.0f)
         lyricsAdapter.replayActiveAnimation()
+    }
+
+    private fun cycleColorTheme() {
+        currentTheme = VibeColorTheme.nextTheme(currentTheme)
+        AppMotionPrefs.setColorTheme(this, currentTheme)
+        binding.root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        applyVibeThemeAndStickerUI(triggerBurst = true)
+        syncActiveLineToPosition(smoothScroll = false)
+    }
+
+    private fun selectStickerStyle(sticker: VibeStickerStyle) {
+        currentSticker = sticker
+        AppMotionPrefs.setStickerStyle(this, sticker)
+        binding.root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        applyVibeThemeAndStickerUI(triggerBurst = true)
+    }
+
+    private fun applyVibeThemeAndStickerUI(triggerBurst: Boolean) {
+        val activeIdx = lyricsAdapter.activeLineIndex
+        val activeLineText = displayedLines.getOrNull(activeIdx)?.text ?: ""
+        val sectionName = resolveActiveSectionLabel(displayedLines, activeIdx.coerceAtLeast(0))
+        val effectiveTheme = currentTheme.resolveEffective(sectionName, activeLineText)
+
+        binding.ambientAura.setColorTheme(effectiveTheme)
+        binding.wordStageVisualizer.setColorTheme(effectiveTheme)
+        binding.wordStageVisualizer.setStickerStyle(currentSticker, triggerBurst = triggerBurst)
+        lyricsAdapter.colorTheme = effectiveTheme
+
+        for (themeBtn in listOf(binding.btnMainTheme, binding.btnWordPageTheme)) {
+            themeBtn.text = currentTheme.shortLabel
+            themeBtn.background = makeGlassChipDrawable(
+                effectiveTheme.chipFillColor,
+                effectiveTheme.primaryColor,
+                radiusDp = 18
+            )
+            themeBtn.setTextColor(effectiveTheme.primaryColor)
+        }
+
+        val stickerMap = listOf(
+            VibeStickerStyle.VINYL_DISC to binding.chipStickerVinyl,
+            VibeStickerStyle.FIRE_DROP to binding.chipStickerFire,
+            VibeStickerStyle.CYBER_CAT to binding.chipStickerCat,
+            VibeStickerStyle.NEON_HEART to binding.chipStickerHeart,
+            VibeStickerStyle.LIGHTNING_BASS to binding.chipStickerBolt,
+            VibeStickerStyle.STAR_CROWN to binding.chipStickerCrown
+        )
+        val idleFill = Color.parseColor("#B8151B24")
+        val idleStroke = Color.parseColor("#22FFFFFF")
+        val idleText = Color.parseColor("#9DA7B5")
+
+        for ((st, chip) in stickerMap) {
+            val selected = (st == currentSticker)
+            chip.background = makeGlassChipDrawable(
+                if (selected) effectiveTheme.chipFillColor else idleFill,
+                if (selected) effectiveTheme.primaryColor else idleStroke,
+                radiusDp = 18
+            )
+            chip.setTextColor(if (selected) effectiveTheme.primaryColor else idleText)
+        }
+
+        binding.tvWordPageSectionBadge.setTextColor(effectiveTheme.secondaryColor)
+        binding.tvWordPageTime.setTextColor(effectiveTheme.secondaryColor)
+        if (triggerBurst) {
+            binding.ambientAura.triggerPulse(1.0f)
+        }
     }
 
     private fun toggleSearchBar() {
@@ -1202,6 +1307,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val sectionName = resolveActiveSectionLabel(timeline, activeIndex)
+        val effectiveTheme = currentTheme.resolveEffective(sectionName, lineText)
+        binding.wordStageVisualizer.setColorTheme(effectiveTheme)
+        binding.ambientAura.setColorTheme(effectiveTheme)
+        if (lyricsAdapter.colorTheme != effectiveTheme) {
+            lyricsAdapter.colorTheme = effectiveTheme
+        }
+        binding.tvWordPageSectionBadge.setTextColor(effectiveTheme.secondaryColor)
 
         if (isHeader || beat == null || beat.tokens.isEmpty()) {
             val cleanHeader = lineText.removePrefix("[").removeSuffix("]").ifBlank { "♪" }
@@ -1212,7 +1324,8 @@ class MainActivity : AppCompatActivity() {
             val headerKey = (activeIndex.toLong() shl 16) or 0x7FFFL
             if (headerKey != lastBeatWordKey) {
                 lastBeatWordKey = headerKey
-                animateHeroWordSwap(cleanHeader, isSectionHeader = true)
+                binding.wordStageVisualizer.triggerStickerBurst(6)
+                animateHeroWordSwap(cleanHeader, isSectionHeader = true, accentColor = effectiveTheme.primaryColor)
             }
             return
         }
@@ -1225,7 +1338,12 @@ class MainActivity : AppCompatActivity() {
             .coerceIn(0f, 1f)
 
         binding.tvWordPageSectionBadge.text = "✨ $sectionName • СЛОВО ${wordIdx + 1}/$totalWords"
-        binding.tvWordPageCurrentLine.text = MotionUtils.buildWordBeatSpannable(timeline[activeIndex].text, beat)
+        binding.tvWordPageCurrentLine.text = MotionUtils.buildWordBeatSpannable(
+            timeline[activeIndex].text,
+            beat,
+            effectiveTheme.secondaryColor,
+            effectiveTheme.primaryColor
+        )
         binding.pbWordActiveFill.progress = (wordProg * 1000f).toInt().coerceIn(0, 1000)
         binding.wordStageVisualizer.updateWordProgress(wordProg, lineProg)
 
@@ -1234,11 +1352,15 @@ class MainActivity : AppCompatActivity() {
             lastBeatWordKey = wordKey
             binding.ambientAura.triggerPulse(0.55f)
             binding.wordStageVisualizer.triggerWordPulse(1.0f)
-            animateHeroWordSwap(activeToken.text, isSectionHeader = false)
+            animateHeroWordSwap(activeToken.text, isSectionHeader = false, accentColor = effectiveTheme.primaryColor)
         }
     }
 
-    private fun animateHeroWordSwap(newWord: String, isSectionHeader: Boolean) {
+    private fun animateHeroWordSwap(
+        newWord: String,
+        isSectionHeader: Boolean,
+        accentColor: Int = Color.parseColor("#39FF88")
+    ) {
         heroTypewriterAnimator?.cancel()
         val density = resources.displayMetrics.density
         val incoming = if (heroWordUseSlotA) binding.tvWordHeroA else binding.tvWordHeroB
@@ -1264,7 +1386,7 @@ class MainActivity : AppCompatActivity() {
 
         val cleanWord = newWord.trim().ifBlank { "♪" }
         incoming.setTextColor(
-            if (isSectionHeader) Color.parseColor("#39FF88") else Color.WHITE
+            if (isSectionHeader) accentColor else Color.WHITE
         )
         incoming.textSize = when {
             cleanWord.length > 14 -> 30f

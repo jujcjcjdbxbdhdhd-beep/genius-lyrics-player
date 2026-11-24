@@ -60,6 +60,13 @@ class LyricsAdapter(
 
     var motionStyle: IslandAnimStyle = IslandAnimStyle.FLY_IN
 
+    var colorTheme: VibeColorTheme = VibeColorTheme.CYBER_EMERALD
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyDataSetChanged()
+        }
+
     private var currentWordBeat: WordTimingEngine.WordBeatState? = null
     private var currentWordBeatLine: Int = -1
 
@@ -101,7 +108,7 @@ class LyricsAdapter(
     override fun onBindViewHolder(holder: LyricViewHolder, position: Int) {
         val line = lines[position]
         val beat = if (position == currentWordBeatLine) currentWordBeat else null
-        holder.bind(line, position, activeLineIndex, fontSizeSp, displayMode, motionStyle, beat, animateColor = false)
+        holder.bind(line, position, activeLineIndex, fontSizeSp, displayMode, motionStyle, colorTheme, beat, animateColor = false)
         holder.itemView.setOnClickListener {
             val idx = holder.adapterPosition
             if (idx != RecyclerView.NO_POSITION) {
@@ -131,9 +138,9 @@ class LyricsAdapter(
         val line = lines[position]
         val beat = if (position == currentWordBeatLine) currentWordBeat else null
         if (payloads.contains(PAYLOAD_ACTIVE)) {
-            holder.applyState(line, position, activeLineIndex, fontSizeSp, displayMode, motionStyle, beat, animateColor = true)
+            holder.applyState(line, position, activeLineIndex, fontSizeSp, displayMode, motionStyle, colorTheme, beat, animateColor = true)
         } else if (payloads.contains(PAYLOAD_WORD_TICK)) {
-            holder.applyWordTick(line, position, activeLineIndex, displayMode, beat)
+            holder.applyWordTick(line, position, activeLineIndex, displayMode, colorTheme, beat)
         } else {
             super.onBindViewHolder(holder, position, payloads)
         }
@@ -155,6 +162,7 @@ class LyricsAdapter(
             fontSize: Float,
             displayMode: LyricsDisplayMode,
             motionStyle: IslandAnimStyle,
+            colorTheme: VibeColorTheme,
             beatState: WordTimingEngine.WordBeatState?,
             animateColor: Boolean
         ) {
@@ -174,7 +182,7 @@ class LyricsAdapter(
             itemView.translationX = 0f
             tvLine.setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
 
-            applyState(line, position, activeIndex, fontSize, displayMode, motionStyle, beatState, animateColor)
+            applyState(line, position, activeIndex, fontSize, displayMode, motionStyle, colorTheme, beatState, animateColor)
         }
 
         fun applyWordTick(
@@ -182,6 +190,7 @@ class LyricsAdapter(
             position: Int,
             activeIndex: Int,
             displayMode: LyricsDisplayMode,
+            colorTheme: VibeColorTheme,
             beatState: WordTimingEngine.WordBeatState?
         ) {
             if (displayMode != LyricsDisplayMode.WORD_BY_WORD || position != activeIndex) return
@@ -191,7 +200,12 @@ class LyricsAdapter(
 
             typewriterAnimator?.cancel()
             colorAnimator?.cancel()
-            tvLine.text = MotionUtils.buildWordBeatSpannable(line.text, beatState)
+            tvLine.text = MotionUtils.buildWordBeatSpannable(
+                line.text,
+                beatState,
+                colorTheme.secondaryColor,
+                colorTheme.primaryColor
+            )
 
             // Crisp micro-pulse on glowing side bar on each beat word
             viewIndicator.animate().cancel()
@@ -212,12 +226,15 @@ class LyricsAdapter(
             fontSize: Float,
             displayMode: LyricsDisplayMode,
             motionStyle: IslandAnimStyle,
+            colorTheme: VibeColorTheme,
             beatState: WordTimingEngine.WordBeatState?,
             animateColor: Boolean
         ) {
             val trimmed = line.text.trim()
             val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
             val density = itemView.resources.displayMetrics.density
+            val headerAccent = colorTheme.primaryColor
+            viewIndicator.background?.mutate()?.setTint(colorTheme.primaryColor)
 
             typewriterAnimator?.cancel()
 
@@ -233,7 +250,7 @@ class LyricsAdapter(
                 viewIndicator.visibility = View.GONE
                 val targetColor = if (isHeader) {
                     tvLine.textSize = (fontSize - 4f).coerceAtLeast(12f)
-                    COLOR_HEADER
+                    headerAccent
                 } else {
                     tvLine.textSize = fontSize
                     COLOR_PLAIN_TEXT
@@ -254,7 +271,7 @@ class LyricsAdapter(
                     viewIndicator.alpha = 1f
                     viewIndicator.visibility = View.INVISIBLE
                     tvLine.textSize = (fontSize - 5f).coerceAtLeast(12f)
-                    targetColor = COLOR_HEADER
+                    targetColor = headerAccent
                 }
                 isActive -> {
                     viewIndicator.visibility = View.VISIBLE
@@ -396,7 +413,12 @@ class LyricsAdapter(
             if (isWordBeatActive) {
                 currentColor = Color.WHITE
                 tvLine.text = if (beatState != null) {
-                    MotionUtils.buildWordBeatSpannable(line.text, beatState)
+                    MotionUtils.buildWordBeatSpannable(
+                        line.text,
+                        beatState,
+                        colorTheme.secondaryColor,
+                        colorTheme.primaryColor
+                    )
                 } else {
                     line.text
                 }

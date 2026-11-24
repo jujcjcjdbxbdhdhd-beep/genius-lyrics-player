@@ -423,4 +423,47 @@ class TrackParserTest {
         assertTrue("Vocal window completes well before 20s instrumental gap", bGap.isCompleted)
         assertEquals(bGap.tokens.lastIndex, bGap.activeWordIndex)
     }
+
+    @Test
+    fun testVibeColorThemesAndStickers() {
+        // 1. VibeColorTheme cycling & fromId
+        val themes = VibeColorTheme.values()
+        assertEquals(6, themes.size)
+        for (i in themes.indices) {
+            val t = themes[i]
+            assertEquals(t, VibeColorTheme.fromId(t.id))
+            val expectedNext = themes[(i + 1) % themes.size]
+            assertEquals(expectedNext, VibeColorTheme.nextTheme(t))
+        }
+        assertEquals(VibeColorTheme.CYBER_EMERALD, VibeColorTheme.fromId("unknown_theme"))
+
+        // 2. AUTO_VIBE dynamic section & lyric mood resolution
+        val auto = VibeColorTheme.AUTO_VIBE
+        assertEquals(VibeColorTheme.SUNSET_PHONK, auto.resolveEffective("ПРИПЕВ 1", "Обычная строка"))
+        assertEquals(VibeColorTheme.TOKYO_NEON, auto.resolveEffective("БРИДЖ", "Обычная строка"))
+        assertEquals(VibeColorTheme.ARCTIC_AURORA, auto.resolveEffective("ИНТРО", "Обычная строка"))
+        assertEquals(VibeColorTheme.GOLD_GENIUS, auto.resolveEffective("АУТРО", "Обычная строка"))
+        assertEquals(VibeColorTheme.SUNSET_PHONK, auto.resolveEffective("КУПЛЕТ", "Внутри горит огонь и бас"))
+        assertEquals(VibeColorTheme.TOKYO_NEON, auto.resolveEffective("КУПЛЕТ", "Эта ночь и неон"))
+        assertEquals(VibeColorTheme.GOLD_GENIUS, auto.resolveEffective("КУПЛЕТ", "Яркие звезды и золото"))
+        assertEquals(VibeColorTheme.CYBER_EMERALD, auto.resolveEffective("КУПЛЕТ 1", "Спокойный шаг вперед"))
+
+        // Explicit theme ignores section override
+        assertEquals(
+            VibeColorTheme.TOKYO_NEON,
+            VibeColorTheme.TOKYO_NEON.resolveEffective("ПРИПЕВ", "Огонь")
+        )
+
+        // 3. VibeStickerStyle cycling & burst symbols
+        val stickers = VibeStickerStyle.values()
+        assertEquals(6, stickers.size)
+        for (i in stickers.indices) {
+            val s = stickers[i]
+            assertEquals(s, VibeStickerStyle.fromId(s.id))
+            assertTrue("Sticker burst symbols must not be empty", s.burstSymbols.isNotEmpty())
+            val expectedNext = stickers[(i + 1) % stickers.size]
+            assertEquals(expectedNext, VibeStickerStyle.nextSticker(s))
+        }
+        assertEquals(VibeStickerStyle.VINYL_DISC, VibeStickerStyle.fromId(null))
+    }
 }

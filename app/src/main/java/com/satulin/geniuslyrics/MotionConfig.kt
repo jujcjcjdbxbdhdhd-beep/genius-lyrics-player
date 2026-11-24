@@ -55,6 +55,110 @@ enum class LyricsDisplayMode(val id: String, val label: String, val shortLabel: 
     }
 }
 
+enum class VibeColorTheme(
+    val id: String,
+    val shortLabel: String,
+    val primaryColor: Int,
+    val secondaryColor: Int,
+    val tertiaryColor: Int,
+    val chipFillColor: Int
+) {
+    CYBER_EMERALD(
+        id = "emerald",
+        shortLabel = "💚 Изумруд",
+        primaryColor = 0xFF39FF88.toInt(),
+        secondaryColor = 0xFF00E5FF.toInt(),
+        tertiaryColor = 0xFF7B61FF.toInt(),
+        chipFillColor = 0xFF153826.toInt()
+    ),
+    SUNSET_PHONK(
+        id = "phonk",
+        shortLabel = "🔥 Фонк",
+        primaryColor = 0xFFFF3B6B.toInt(),
+        secondaryColor = 0xFFFF9E00.toInt(),
+        tertiaryColor = 0xFFD900FF.toInt(),
+        chipFillColor = 0xFF3D1624.toInt()
+    ),
+    TOKYO_NEON(
+        id = "tokyo",
+        shortLabel = "💜 Неон",
+        primaryColor = 0xFFFF2A85.toInt(),
+        secondaryColor = 0xFF00F5D4.toInt(),
+        tertiaryColor = 0xFF9D4EDD.toInt(),
+        chipFillColor = 0xFF33183E.toInt()
+    ),
+    GOLD_GENIUS(
+        id = "gold",
+        shortLabel = "⚡ Золото",
+        primaryColor = 0xFFFFE600.toInt(),
+        secondaryColor = 0xFFFF8800.toInt(),
+        tertiaryColor = 0xFF39FF88.toInt(),
+        chipFillColor = 0xFF3A3212.toInt()
+    ),
+    ARCTIC_AURORA(
+        id = "aurora",
+        shortLabel = "❄️ Аврора",
+        primaryColor = 0xFF00F0FF.toInt(),
+        secondaryColor = 0xFF60A5FA.toInt(),
+        tertiaryColor = 0xFF2DD4BF.toInt(),
+        chipFillColor = 0xFF132F42.toInt()
+    ),
+    AUTO_VIBE(
+        id = "auto",
+        shortLabel = "🌈 Авто-вайб",
+        primaryColor = 0xFF00E5FF.toInt(),
+        secondaryColor = 0xFF39FF88.toInt(),
+        tertiaryColor = 0xFFFF2A85.toInt(),
+        chipFillColor = 0xFF1C2D42.toInt()
+    );
+
+    fun resolveEffective(sectionName: String = "", lineText: String = ""): VibeColorTheme {
+        if (this != AUTO_VIBE) return this
+        val sec = sectionName.lowercase()
+        val txt = lineText.lowercase()
+        return when {
+            sec.contains("припев") || sec.contains("chorus") || sec.contains("hook") || sec.contains("drop") -> SUNSET_PHONK
+            sec.contains("бридж") || sec.contains("bridge") || sec.contains("соло") -> TOKYO_NEON
+            sec.contains("интро") || sec.contains("intro") -> ARCTIC_AURORA
+            sec.contains("аутро") || sec.contains("outro") -> GOLD_GENIUS
+            txt.contains("огонь") || txt.contains("fire") || txt.contains("кров") || txt.contains("бас") -> SUNSET_PHONK
+            txt.contains("ночь") || txt.contains("неон") || txt.contains("люб") || txt.contains("love") -> TOKYO_NEON
+            txt.contains("золот") || txt.contains("деньг") || txt.contains("сия") || txt.contains("звезд") -> GOLD_GENIUS
+            else -> CYBER_EMERALD
+        }
+    }
+
+    companion object {
+        fun fromId(id: String?): VibeColorTheme =
+            values().firstOrNull { it.id == id } ?: CYBER_EMERALD
+
+        fun nextTheme(current: VibeColorTheme): VibeColorTheme =
+            values()[(current.ordinal + 1) % values().size]
+    }
+}
+
+enum class VibeStickerStyle(
+    val id: String,
+    val shortLabel: String,
+    val badgeTitle: String,
+    val burstSymbols: List<String>
+) {
+    VINYL_DISC("vinyl", "💿 Винил", "VINYL SPIN", listOf("💿", "♪", "♫", "✨")),
+    FIRE_DROP("fire", "🔥 Огонь", "FIRE DROP", listOf("🔥", "💥", "⚡", "✨")),
+    CYBER_CAT("cat", "😼 Вайб-кот", "SYNTH CAT", listOf("😼", "🎧", "🕶️", "✨")),
+    NEON_HEART("heart", "💖 Неон-бит", "HEART BEAT", listOf("💖", "💜", "💫", "✨")),
+    LIGHTNING_BASS("bolt", "⚡ Разряд", "HIGH VOLT", listOf("⚡", "🔋", "💥", "✨")),
+    STAR_CROWN("crown", "👑 Хит", "TOP HIT", listOf("👑", "⭐", "💎", "✨"));
+
+    companion object {
+        fun fromId(id: String?): VibeStickerStyle =
+            values().firstOrNull { it.id == id } ?: VINYL_DISC
+
+        fun nextSticker(current: VibeStickerStyle): VibeStickerStyle =
+            values()[(current.ordinal + 1) % values().size]
+    }
+}
+
 object SpringMath {
     /**
      * Evaluates a physical damped harmonic oscillator curve for normalized time t in [0, 1].
@@ -216,6 +320,8 @@ object AppMotionPrefs {
     const val KEY_ISLAND_STYLE = "island_anim_style"
     const val KEY_KARAOKE_ENABLED = "karaoke_enabled"
     const val KEY_DISPLAY_MODE = "lyrics_display_mode"
+    const val KEY_COLOR_THEME = "vibe_color_theme"
+    const val KEY_STICKER_STYLE = "vibe_sticker_style"
     const val ACTION_PREFS_CHANGED = "com.satulin.geniuslyrics.ACTION_PREFS_CHANGED"
 
     @Volatile
@@ -269,6 +375,34 @@ object AppMotionPrefs {
 
     fun setKaraokeEnabled(context: Context, enabled: Boolean) {
         setDisplayMode(context, if (enabled) LyricsDisplayMode.KARAOKE else LyricsDisplayMode.PLAIN_TEXT)
+    }
+
+    fun getColorTheme(context: Context): VibeColorTheme {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_COLOR_THEME, VibeColorTheme.CYBER_EMERALD.id)
+        return VibeColorTheme.fromId(raw)
+    }
+
+    fun setColorTheme(context: Context, theme: VibeColorTheme) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_COLOR_THEME, theme.id)
+            .apply()
+        notifyPrefsChanged(context)
+    }
+
+    fun getStickerStyle(context: Context): VibeStickerStyle {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_STICKER_STYLE, VibeStickerStyle.VINYL_DISC.id)
+        return VibeStickerStyle.fromId(raw)
+    }
+
+    fun setStickerStyle(context: Context, sticker: VibeStickerStyle) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_STICKER_STYLE, sticker.id)
+            .apply()
+        notifyPrefsChanged(context)
     }
 
     private fun notifyPrefsChanged(context: Context) {
@@ -370,7 +504,12 @@ object MotionUtils {
         }
     }
 
-    fun buildWordBeatSpannable(lineText: String, beat: WordTimingEngine.WordBeatState): SpannableString {
+    fun buildWordBeatSpannable(
+        lineText: String,
+        beat: WordTimingEngine.WordBeatState,
+        activeStartColor: Int = Color.parseColor("#00E5FF"),
+        activeEndColor: Int = Color.parseColor("#39FF88")
+    ): SpannableString {
         val spannable = SpannableString(lineText)
         if (beat.isCompleted) {
             spannable.setSpan(
@@ -389,14 +528,13 @@ object MotionUtils {
         }
 
         val sungColor = Color.WHITE
-        val activeStartColor = Color.parseColor("#00E5FF")
-        val activeEndColor = Color.parseColor("#39FF88")
         val activeWordColor = ArgbEvaluator().evaluate(
             beat.activeWordProgress.coerceIn(0f, 1f),
             activeStartColor,
             activeEndColor
         ) as Int
-        val upcomingColor = Color.parseColor("#5E6878")
+        val nextWordColor = Color.parseColor("#9AA6B8")
+        val upcomingColor = Color.parseColor("#586273")
 
         for (i in beat.tokens.indices) {
             val tok = beat.tokens[i]
@@ -422,6 +560,14 @@ object MotionUtils {
                     )
                     spannable.setSpan(
                         StyleSpan(Typeface.BOLD),
+                        start,
+                        end,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+                i == beat.activeWordIndex + 1 -> {
+                    spannable.setSpan(
+                        ForegroundColorSpan(nextWordColor),
                         start,
                         end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

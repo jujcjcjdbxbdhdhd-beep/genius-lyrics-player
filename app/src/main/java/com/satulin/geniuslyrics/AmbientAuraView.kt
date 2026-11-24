@@ -36,24 +36,28 @@ class AmbientAuraView @JvmOverloads constructor(
     private val orbBaseRadii = FloatArray(3)
 
     init {
-        val emeraldColors = intArrayOf(
-            Color.argb(255, 29, 185, 84),
-            Color.argb(120, 30, 215, 96),
-            Color.TRANSPARENT
+        applyPaletteColors(
+            VibeColorTheme.CYBER_EMERALD.primaryColor,
+            VibeColorTheme.CYBER_EMERALD.secondaryColor,
+            VibeColorTheme.CYBER_EMERALD.tertiaryColor
         )
-        val cyanColors = intArrayOf(
-            Color.argb(255, 0, 212, 255),
-            Color.argb(110, 0, 180, 235),
-            Color.TRANSPARENT
-        )
-        val violetColors = intArrayOf(
-            Color.argb(255, 107, 78, 255),
-            Color.argb(110, 88, 60, 220),
-            Color.TRANSPARENT
-        )
-        val stops = floatArrayOf(0f, 0.45f, 1f)
-        val palettes = arrayOf(emeraldColors, cyanColors, violetColors)
+    }
 
+    fun setColorTheme(theme: VibeColorTheme) {
+        applyPaletteColors(theme.primaryColor, theme.secondaryColor, theme.tertiaryColor)
+        invalidate()
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+
+    private fun applyPaletteColors(c0: Int, c1: Int, c2: Int) {
+        val stops = floatArrayOf(0f, 0.45f, 1f)
+        val palettes = arrayOf(
+            intArrayOf(withAlpha(c0, 255), withAlpha(c0, 120), Color.TRANSPARENT),
+            intArrayOf(withAlpha(c1, 255), withAlpha(c1, 110), Color.TRANSPARENT),
+            intArrayOf(withAlpha(c2, 255), withAlpha(c2, 110), Color.TRANSPARENT)
+        )
         for (i in 0 until 3) {
             val shader = RadialGradient(0f, 0f, 1f, palettes[i], stops, Shader.TileMode.CLAMP)
             orbShaders[i] = shader
