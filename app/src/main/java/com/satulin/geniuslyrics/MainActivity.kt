@@ -96,6 +96,9 @@ class MainActivity : AppCompatActivity() {
     private var eqJob: Job? = null
     private var eqPhase: Double = 0.0
     private var lastBeatWordKey: Long = -1L
+    private var lastWordPageLineIdx: Int = -1
+    private var heroWordUseSlotA: Boolean = true
+    private var heroTypewriterAnimator: ValueAnimator? = null
     private var cardStrokeAnimator: ValueAnimator? = null
 
     private val trackReceiver = object : BroadcastReceiver() {
@@ -114,6 +117,7 @@ class MainActivity : AppCompatActivity() {
 
                     updatePlaybackTime(pos, dur, updated, isPlaying, spd)
                     binding.ambientAura.setPlaying(isPlaying)
+                    binding.wordStageVisualizer.setPlayingState(isPlaying)
                     onTrackUpdated(title, artist, rawTitle, artistFromTitle, isPlaying)
                 }
                 MediaNotificationListener.ACTION_PLAYBACK_STATE -> {
@@ -125,6 +129,7 @@ class MainActivity : AppCompatActivity() {
                     val fromSeek = intent.getBooleanExtra(MediaNotificationListener.EXTRA_FROM_SEEK, false)
 
                     binding.ambientAura.setPlaying(isPlaying)
+                    binding.wordStageVisualizer.setPlayingState(isPlaying)
                     val now = SystemClock.elapsedRealtime()
                     if (fromSeek) {
                         seekIgnoreUntilSystemMs = now + 650L
@@ -208,6 +213,12 @@ class MainActivity : AppCompatActivity() {
                 baseRvTop,
                 0,
                 baseRvBottom + sysBars.bottom
+            )
+            binding.layoutWordByWordPage.setPadding(
+                baseSide + sysBars.left,
+                baseTop + sysBars.top,
+                baseSide + sysBars.right,
+                baseBottom + sysBars.bottom
             )
             binding.layoutGeniusWebView.setPadding(
                 sysBars.left,
@@ -395,6 +406,7 @@ class MainActivity : AppCompatActivity() {
             )
         }
         binding.ambientAura.setPlaying(MediaNotificationListener.isPlaying)
+        binding.wordStageVisualizer.setPlayingState(MediaNotificationListener.isPlaying)
         startMainEqualizerLoop()
     }
 
@@ -427,31 +439,51 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnSyncBackMain.setOnClickListener {
-            manualSyncOffsetMs -= 500L
-            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
-            updateSyncOffsetLabel()
-            syncActiveLineToPosition(smoothScroll = true)
-            val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
-            Toast.makeText(this, "Сдвиг текста: $secStr (позже)", Toast.LENGTH_SHORT).show()
+            nudgeSyncOffset(-500L)
         }
 
         binding.btnSyncFwdMain.setOnClickListener {
-            manualSyncOffsetMs += 500L
-            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
-            updateSyncOffsetLabel()
-            syncActiveLineToPosition(smoothScroll = true)
-            val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
-            Toast.makeText(this, "Сдвиг текста: $secStr (раньше)", Toast.LENGTH_SHORT).show()
+            nudgeSyncOffset(500L)
         }
 
         binding.tvSyncOffsetMain.setOnClickListener {
-            manualSyncOffsetMs = 0L
-            scrollSpeedFactor = 1.0f
-            AppMotionPrefs.setSyncOffsetMs(this, 0L)
-            updateSyncOffsetLabel()
-            updateSpeedLabel()
-            syncActiveLineToPosition(smoothScroll = true)
-            Toast.makeText(this, "Синхронизация сброшена (0.0с • 1.0x)", Toast.LENGTH_SHORT).show()
+            resetSyncAndSpeed()
+        }
+
+        binding.btnWordPageBack.setOnClickListener {
+            selectDisplayMode(LyricsDisplayMode.KARAOKE)
+        }
+
+        binding.btnWordPageStyle.setOnClickListener {
+            val next = IslandAnimStyle.nextStyle(currentStyle)
+            selectMotionStyle(next)
+            lastBeatWordKey = -1L
+            syncActiveLineToPosition(smoothScroll = false)
+        }
+
+        binding.btnWordPageSyncBack.setOnClickListener {
+            nudgeSyncOffset(-500L)
+        }
+
+        binding.btnWordPageSyncFwd.setOnClickListener {
+            nudgeSyncOffset(500L)
+        }
+
+        binding.tvWordPageSyncOffset.setOnClickListener {
+            resetSyncAndSpeed()
+        }
+
+        binding.btnWordPagePrevLine.setOnClickListener {
+            stepWordPageLine(-1)
+        }
+        binding.tvWordPagePrevLine.setOnClickListener {
+            stepWordPageLine(-1)
+        }
+        binding.btnWordPageNextLine.setOnClickListener {
+            stepWordPageLine(1)
+        }
+        binding.tvWordPageNextLine.setOnClickListener {
+            stepWordPageLine(1)
         }
 
         binding.btnSpeedDown.setOnClickListener {
@@ -594,7 +626,14 @@ class MainActivity : AppCompatActivity() {
             binding.btnSyncCurrentLine,
             binding.btnRefreshLyrics,
             binding.btnImportFromGeniusWeb,
-            binding.btnPlaceholderGeniusWeb
+            binding.btnPlaceholderGeniusWeb,
+            binding.btnWordPageBack,
+            binding.btnWordPageStyle,
+            binding.btnWordPagePrevLine,
+            binding.btnWordPageNextLine,
+            binding.btnWordPageSyncBack,
+            binding.tvWordPageSyncOffset,
+            binding.btnWordPageSyncFwd
         )
 
         setupGeniusWebView()
@@ -688,6 +727,51 @@ class MainActivity : AppCompatActivity() {
             )
             tv.setTextColor(if (selected) activeText else idleText)
         }
+        binding.btnWordPageStyle.text = currentStyle.shortLabel
+        binding.btnWordPageStyle.background = makeGlassChipDrawable(activeFill, activeStroke, radiusDp = 18)
+    }
+
+    private fun showWordByWordPage(visible: Boolean, animate: Boolean) {
+        val page = binding.layoutWordByWordPage
+        page.animate().cancel()
+        val density = resources.displayMetrics.density
+        if (visible) {
+            binding.wordStageVisualizer.setPlayingState(isMediaPlaying)
+            if (page.visibility == View.VISIBLE && page.alpha > 0.95f) return
+            page.visibility = View.VISIBLE
+            if (animate) {
+                page.alpha = 0f
+                page.translationY = 28f * density
+                page.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(260L)
+                    .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                    .start()
+            } else {
+                page.alpha = 1f
+                page.translationY = 0f
+            }
+        } else {
+            if (page.visibility == View.GONE) return
+            if (animate) {
+                page.animate()
+                    .alpha(0f)
+                    .translationY(24f * density)
+                    .setDuration(180L)
+                    .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+                    .withEndAction {
+                        page.visibility = View.GONE
+                        page.alpha = 1f
+                        page.translationY = 0f
+                    }
+                    .start()
+            } else {
+                page.visibility = View.GONE
+                page.alpha = 1f
+                page.translationY = 0f
+            }
+        }
     }
 
     private fun applyDisplayModeUI(animate: Boolean) {
@@ -715,6 +799,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        val isWordPage = (displayMode == LyricsDisplayMode.WORD_BY_WORD)
+        showWordByWordPage(isWordPage, animate)
+
         val isKaraokeActive = (displayMode != LyricsDisplayMode.PLAIN_TEXT)
         binding.scrollMainStyles.visibility = if (isKaraokeActive) View.VISIBLE else View.GONE
         binding.tvPlainTextModeLabel.visibility = if (isKaraokeActive) View.GONE else View.VISIBLE
@@ -723,6 +810,10 @@ class MainActivity : AppCompatActivity() {
             showSyncPill(false)
             stopAutoScroll()
         } else {
+            if (isWordPage) {
+                lastBeatWordKey = -1L
+                lastWordPageLineIdx = -1
+            }
             if (isAutoScrolling) {
                 startAutoScrollLoop()
             }
@@ -890,15 +981,76 @@ class MainActivity : AppCompatActivity() {
     private fun updateProgressUI() {
         if (isManualSearchMode) return
         val currentMs = getCurrentTrackPosition()
-        binding.tvCurrentTime.text = formatTime(currentMs)
+        val curStr = formatTime(currentMs)
+        binding.tvCurrentTime.text = curStr
         if (totalDurationMs > 0L) {
-            binding.tvTotalTime.text = formatTime(totalDurationMs)
+            val totStr = formatTime(totalDurationMs)
+            binding.tvTotalTime.text = totStr
+            binding.tvWordPageTime.text = "$curStr / $totStr"
             val progress = ((currentMs.toDouble() / totalDurationMs) * 1000).toInt().coerceIn(0, 1000)
             MotionUtils.animateProgressSmooth(binding.pbTrackProgress, progress)
+            MotionUtils.animateProgressSmooth(binding.pbWordPageTrack, progress)
         } else {
             binding.tvTotalTime.text = "--:--"
+            binding.tvWordPageTime.text = "$curStr / --:--"
             binding.pbTrackProgress.progress = 0
+            binding.pbWordPageTrack.progress = 0
         }
+    }
+
+    private fun nudgeSyncOffset(deltaMs: Long) {
+        manualSyncOffsetMs += deltaMs
+        AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
+        updateSyncOffsetLabel()
+        syncActiveLineToPosition(smoothScroll = true)
+        val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
+        val dir = if (deltaMs < 0) "позже" else "раньше"
+        Toast.makeText(this, "Сдвиг текста: $secStr ($dir)", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun resetSyncAndSpeed() {
+        manualSyncOffsetMs = 0L
+        scrollSpeedFactor = 1.0f
+        AppMotionPrefs.setSyncOffsetMs(this, 0L)
+        updateSyncOffsetLabel()
+        updateSpeedLabel()
+        syncActiveLineToPosition(smoothScroll = true)
+        Toast.makeText(this, "Синхронизация сброшена (0.0с • 1.0x)", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stepWordPageLine(delta: Int) {
+        if (displayedLines.isEmpty()) return
+        val cur = lyricsAdapter.activeLineIndex.coerceAtLeast(0)
+        var target = (cur + delta).coerceIn(0, displayedLines.lastIndex)
+        while (target in displayedLines.indices &&
+            displayedLines[target].text.trim().let { it.startsWith("[") && it.endsWith("]") } &&
+            target + delta in displayedLines.indices
+        ) {
+            target += delta
+        }
+        val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
+        val tappedTime = GeniusLyricsFetcher.resolveLineTimestampMs(displayedLines, target, effectiveDur)
+        if (!isManualSearchMode && tappedTime >= 0L) {
+            val seekPos = GeniusLyricsFetcher.computeSeekTargetMs(tappedTime, manualSyncOffsetMs, effectiveDur)
+            if (MediaNotificationListener.seekTo(seekPos)) {
+                val now = SystemClock.elapsedRealtime()
+                seekIgnoreUntilSystemMs = now + 650L
+                lastKnownPositionMs = seekPos
+                lastUpdateTimeSystem = now
+                updateProgressUI()
+            } else {
+                virtualPositionMs = tappedTime
+            }
+        } else if (tappedTime >= 0L) {
+            virtualPositionMs = tappedTime
+        }
+        binding.layoutWordByWordPage.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        selectLine(target, smoothScroll = true, force = true)
+        val effMs = if (tappedTime >= 0L) tappedTime else computeEffectivePlaybackMs()
+        val dur = if (effectiveDur > 0L) effectiveDur else (displayedLines.size * 2800L).coerceAtLeast(30_000L)
+        val beat = WordTimingEngine.computeBeatState(displayedLines, target, effMs, dur)
+        lyricsAdapter.updateWordBeat(target, beat)
+        updateWordByWordPageStage(displayedLines, target, beat, effMs, dur)
     }
 
     private fun toggleAutoScroll() {
@@ -924,7 +1076,7 @@ class MainActivity : AppCompatActivity() {
         if (displayMode == LyricsDisplayMode.PLAIN_TEXT) return
         scrollJob = lifecycleScope.launch {
             while (isActive && isAutoScrolling && displayMode != LyricsDisplayMode.PLAIN_TEXT) {
-                val tickDelayMs = if (displayMode == LyricsDisplayMode.WORD_BY_WORD) 45L else 85L
+                val tickDelayMs = if (displayMode == LyricsDisplayMode.WORD_BY_WORD) 25L else 80L
                 if (lyricsLines.isNotEmpty()) {
                     updateProgressUI()
                     refreshAdaptedTimelineIfNeeded()
@@ -978,17 +1130,213 @@ class MainActivity : AppCompatActivity() {
                         if (displayMode == LyricsDisplayMode.WORD_BY_WORD && bestIndex >= 0) {
                             val beat = WordTimingEngine.computeBeatState(timelineLines, bestIndex, effectiveMs, effectiveDur)
                             lyricsAdapter.updateWordBeat(bestIndex, beat)
-                            if (beat != null && !beat.isCompleted) {
-                                val wordKey = (bestIndex.toLong() shl 16) or beat.activeWordIndex.toLong()
-                                if (wordKey != lastBeatWordKey) {
-                                    lastBeatWordKey = wordKey
-                                    binding.ambientAura.triggerPulse(0.45f)
-                                }
-                            }
+                            updateWordByWordPageStage(timelineLines, bestIndex, beat, effectiveMs, effectiveDur)
                         }
                     }
                 }
                 delay(tickDelayMs)
+            }
+        }
+    }
+
+    private fun resolveActiveSectionLabel(timeline: List<LyricLine>, activeIdx: Int): String {
+        for (i in activeIdx downTo 0) {
+            val t = timeline.getOrNull(i)?.text?.trim() ?: continue
+            if (t.startsWith("[") && t.endsWith("]")) {
+                return t.removePrefix("[").removeSuffix("]").trim().uppercase()
+            }
+        }
+        return "РИТМ СЛОВ"
+    }
+
+    private fun findNeighborVocalLine(timeline: List<LyricLine>, fromIndex: Int, direction: Int): String {
+        var idx = fromIndex + direction
+        while (idx in timeline.indices) {
+            val raw = timeline[idx].text.trim()
+            if (raw.isNotBlank() && !(raw.startsWith("[") && raw.endsWith("]"))) {
+                return raw
+            }
+            idx += direction
+        }
+        return ""
+    }
+
+    private fun updateWordByWordPageStage(
+        timeline: List<LyricLine>,
+        activeIndex: Int,
+        beat: WordTimingEngine.WordBeatState?,
+        effectiveMs: Long,
+        effectiveDur: Long
+    ) {
+        if (activeIndex !in timeline.indices) return
+        val density = resources.displayMetrics.density
+        val lineText = timeline[activeIndex].text.trim()
+        val isHeader = lineText.startsWith("[") && lineText.endsWith("]")
+
+        if (activeIndex != lastWordPageLineIdx) {
+            lastWordPageLineIdx = activeIndex
+            val prevText = findNeighborVocalLine(timeline, activeIndex, -1)
+            val nextText = findNeighborVocalLine(timeline, activeIndex, 1)
+
+            binding.tvWordPagePrevLine.animate().cancel()
+            binding.tvWordPagePrevLine.text = prevText
+            binding.tvWordPagePrevLine.alpha = 0f
+            binding.tvWordPagePrevLine.translationY = 10f * density
+            binding.tvWordPagePrevLine.animate()
+                .alpha(0.65f)
+                .translationY(0f)
+                .setDuration(220L)
+                .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                .start()
+
+            binding.tvWordPageNextLine.animate().cancel()
+            binding.tvWordPageNextLine.text = nextText
+            binding.tvWordPageNextLine.alpha = 0f
+            binding.tvWordPageNextLine.translationY = 12f * density
+            binding.tvWordPageNextLine.animate()
+                .alpha(0.85f)
+                .translationY(0f)
+                .setDuration(240L)
+                .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                .start()
+        }
+
+        val sectionName = resolveActiveSectionLabel(timeline, activeIndex)
+
+        if (isHeader || beat == null || beat.tokens.isEmpty()) {
+            val cleanHeader = lineText.removePrefix("[").removeSuffix("]").ifBlank { "♪" }
+            binding.tvWordPageSectionBadge.text = "✨ $sectionName"
+            binding.tvWordPageCurrentLine.text = lineText
+            binding.pbWordActiveFill.progress = 1000
+            binding.wordStageVisualizer.updateWordProgress(1f, 1f)
+            val headerKey = (activeIndex.toLong() shl 16) or 0x7FFFL
+            if (headerKey != lastBeatWordKey) {
+                lastBeatWordKey = headerKey
+                animateHeroWordSwap(cleanHeader, isSectionHeader = true)
+            }
+            return
+        }
+
+        val wordIdx = beat.activeWordIndex.coerceIn(0, beat.tokens.lastIndex)
+        val totalWords = beat.tokens.size
+        val activeToken = beat.tokens[wordIdx]
+        val wordProg = beat.activeWordProgress.coerceIn(0f, 1f)
+        val lineProg = (activeToken.startFraction + (activeToken.endFraction - activeToken.startFraction) * wordProg)
+            .coerceIn(0f, 1f)
+
+        binding.tvWordPageSectionBadge.text = "✨ $sectionName • СЛОВО ${wordIdx + 1}/$totalWords"
+        binding.tvWordPageCurrentLine.text = MotionUtils.buildWordBeatSpannable(timeline[activeIndex].text, beat)
+        binding.pbWordActiveFill.progress = (wordProg * 1000f).toInt().coerceIn(0, 1000)
+        binding.wordStageVisualizer.updateWordProgress(wordProg, lineProg)
+
+        val wordKey = (activeIndex.toLong() shl 16) or wordIdx.toLong()
+        if (wordKey != lastBeatWordKey) {
+            lastBeatWordKey = wordKey
+            binding.ambientAura.triggerPulse(0.55f)
+            binding.wordStageVisualizer.triggerWordPulse(1.0f)
+            animateHeroWordSwap(activeToken.text, isSectionHeader = false)
+        }
+    }
+
+    private fun animateHeroWordSwap(newWord: String, isSectionHeader: Boolean) {
+        heroTypewriterAnimator?.cancel()
+        val density = resources.displayMetrics.density
+        val incoming = if (heroWordUseSlotA) binding.tvWordHeroA else binding.tvWordHeroB
+        val outgoing = if (heroWordUseSlotA) binding.tvWordHeroB else binding.tvWordHeroA
+        heroWordUseSlotA = !heroWordUseSlotA
+
+        outgoing.animate().cancel()
+        incoming.animate().cancel()
+
+        val outDy = when (currentStyle) {
+            IslandAnimStyle.SLIDE_KINETIC -> 0f
+            else -> -24f * density
+        }
+        val outDx = if (currentStyle == IslandAnimStyle.SLIDE_KINETIC) -34f * density else 0f
+
+        outgoing.animate()
+            .alpha(0f)
+            .translationY(outDy)
+            .translationX(outDx)
+            .setDuration(200L)
+            .setInterpolator(MotionUtils.EASE_OUT_CUBIC)
+            .start()
+
+        val cleanWord = newWord.trim().ifBlank { "♪" }
+        incoming.setTextColor(
+            if (isSectionHeader) Color.parseColor("#39FF88") else Color.WHITE
+        )
+        incoming.textSize = when {
+            cleanWord.length > 14 -> 30f
+            cleanWord.length > 10 -> 34f
+            else -> 40f
+        }
+        incoming.scaleX = 1f
+        incoming.scaleY = 1f
+
+        when (currentStyle) {
+            IslandAnimStyle.FLY_IN -> {
+                incoming.text = cleanWord
+                incoming.alpha = 0f
+                incoming.translationX = 0f
+                incoming.translationY = 26f * density
+                incoming.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(260L)
+                    .setInterpolator(MotionUtils.SPRING_SNAPPY)
+                    .start()
+            }
+            IslandAnimStyle.FADE -> {
+                incoming.text = cleanWord
+                incoming.alpha = 0f
+                incoming.translationX = 0f
+                incoming.translationY = 10f * density
+                incoming.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(230L)
+                    .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                    .start()
+            }
+            IslandAnimStyle.SLIDE_KINETIC -> {
+                incoming.text = cleanWord
+                incoming.alpha = 0f
+                incoming.translationY = 0f
+                incoming.translationX = 36f * density
+                incoming.animate()
+                    .alpha(1f)
+                    .translationX(0f)
+                    .setDuration(240L)
+                    .setInterpolator(MotionUtils.EASE_OUT_EXPO)
+                    .start()
+            }
+            IslandAnimStyle.ELASTIC_POP -> {
+                incoming.text = cleanWord
+                incoming.alpha = 0f
+                incoming.translationX = 0f
+                incoming.translationY = 32f * density
+                incoming.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(300L)
+                    .setInterpolator(MotionUtils.SPRING_BOUNCY)
+                    .start()
+            }
+            IslandAnimStyle.TYPEWRITER -> {
+                incoming.alpha = 1f
+                incoming.translationX = 0f
+                incoming.translationY = 0f
+                val len = cleanWord.length.coerceAtLeast(1)
+                heroTypewriterAnimator = ValueAnimator.ofInt(1, len).apply {
+                    duration = (len * 28L).coerceIn(90L, 240L)
+                    interpolator = MotionUtils.EASE_OUT_CUBIC
+                    addUpdateListener { anim ->
+                        val count = (anim.animatedValue as Int).coerceIn(1, cleanWord.length)
+                        incoming.text = cleanWord.substring(0, count)
+                    }
+                    start()
+                }
             }
         }
     }
@@ -1007,15 +1355,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncActiveLineToPosition(smoothScroll: Boolean) {
-        if (displayMode == LyricsDisplayMode.PLAIN_TEXT || isManualSearchMode || displayedLines.isEmpty()) return
+        if (displayMode == LyricsDisplayMode.PLAIN_TEXT || displayedLines.isEmpty()) return
         refreshAdaptedTimelineIfNeeded()
-        val effectiveMs = computeEffectivePlaybackMs()
-        val bestIndex = findBestLineIndex(displayedLines, effectiveMs)
+        val effectiveMs = if (isManualSearchMode) {
+            (virtualPositionMs + manualSyncOffsetMs).coerceAtLeast(0L)
+        } else {
+            computeEffectivePlaybackMs()
+        }
+        val bestIndex = findBestLineIndex(displayedLines, effectiveMs).let {
+            if (it == -1 && displayedLines.isNotEmpty()) 0 else it
+        }
         if (bestIndex != -1) {
             if (displayMode == LyricsDisplayMode.WORD_BY_WORD) {
                 val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else (displayedLines.size * 2800L).coerceAtLeast(30_000L)
                 val beat = WordTimingEngine.computeBeatState(displayedLines, bestIndex, effectiveMs, effectiveDur)
                 lyricsAdapter.updateWordBeat(bestIndex, beat)
+                updateWordByWordPageStage(displayedLines, bestIndex, beat, effectiveMs, effectiveDur)
             }
             if (bestIndex != lyricsAdapter.activeLineIndex) {
                 selectLine(bestIndex, smoothScroll = smoothScroll, force = false)
@@ -1054,14 +1409,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateSyncOffsetLabel() {
         val sec = manualSyncOffsetMs / 1000.0
-        binding.tvSyncOffsetMain.text = if (manualSyncOffsetMs == 0L) {
+        val label = if (manualSyncOffsetMs == 0L) {
             "0.0с"
         } else {
             String.format("%+.1fс", sec)
         }
-        binding.tvSyncOffsetMain.setTextColor(
-            if (manualSyncOffsetMs == 0L) Color.parseColor("#9DA7B5") else Color.parseColor("#39FF88")
-        )
+        val color = if (manualSyncOffsetMs == 0L) Color.parseColor("#9DA7B5") else Color.parseColor("#39FF88")
+        binding.tvSyncOffsetMain.text = label
+        binding.tvSyncOffsetMain.setTextColor(color)
+        binding.tvWordPageSyncOffset.text = label
+        binding.tvWordPageSyncOffset.setTextColor(color)
     }
 
     private fun updatePlayStatusBadge(isPlaying: Boolean) {
@@ -1109,6 +1466,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvSongTitle.text = cleanTitle
         binding.tvSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
+        binding.tvWordPageSongTitle.text = cleanTitle
+        binding.tvWordPageSongArtist.text = if (cleanArtist.isNotBlank()) cleanArtist else "SoundCloud • Spotify"
+        lastBeatWordKey = -1L
+        lastWordPageLineIdx = -1
         animateTrackHeaderSwap()
         updateProgressUI()
 
@@ -1153,6 +1514,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.tvSongTitle.text = targetTitle
         binding.tvSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Genius / Spotify"
+        binding.tvWordPageSongTitle.text = targetTitle
+        binding.tvWordPageSongArtist.text = if (targetArtist.isNotBlank()) targetArtist else "Genius / Spotify"
+        lastBeatWordKey = -1L
+        lastWordPageLineIdx = -1
         binding.tvStatusBadge.text = "● ПОИСК"
         binding.tvStatusBadge.setTextColor(Color.parseColor("#1DB954"))
         binding.tvCurrentTime.text = "00:00"
@@ -1180,6 +1545,9 @@ class MainActivity : AppCompatActivity() {
         binding.btnPlaceholderGeniusWeb.visibility = View.GONE
         binding.tvLyricsPlaceholder.text = "Ищем текст на Genius и в базе караоке..."
         binding.rvLyrics.visibility = View.GONE
+        binding.tvWordPageCurrentLine.text = "Ищем текст трека..."
+        binding.tvWordPagePrevLine.text = ""
+        binding.tvWordPageNextLine.text = ""
         showSyncPill(false)
         isUserManuallyScrolling = false
 
@@ -1247,6 +1615,13 @@ class MainActivity : AppCompatActivity() {
 
                 binding.tvSongTitle.text = displayTitle
                 binding.tvSongArtist.text = displayArtist
+                binding.tvWordPageSongTitle.text = displayTitle
+                binding.tvWordPageSongArtist.text = "$displayArtist • ${lyricsResult.sourceName}"
+                lastBeatWordKey = -1L
+                lastWordPageLineIdx = -1
+                if (displayMode == LyricsDisplayMode.WORD_BY_WORD) {
+                    syncActiveLineToPosition(smoothScroll = false)
+                }
 
                 if (binding.layoutGeniusWebView.visibility == View.VISIBLE) {
                     updateJumpToGeniusBanner()
@@ -1262,6 +1637,7 @@ class MainActivity : AppCompatActivity() {
                 binding.btnPlaceholderGeniusWeb.visibility = View.VISIBLE
                 val searchedLabel = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" — ")
                 binding.tvLyricsPlaceholder.text = "Текст не найден для «$searchedLabel».\n\nНажмите кнопку ниже — откроется готовый поиск на Genius.com!"
+                binding.tvWordPageCurrentLine.text = "Текст не найден для «$searchedLabel»"
             }
         }
     }
@@ -1580,6 +1956,8 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         closeGeniusWeb()
                     }
+                } else if (binding.layoutWordByWordPage.visibility == View.VISIBLE) {
+                    selectDisplayMode(LyricsDisplayMode.KARAOKE)
                 } else {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
@@ -1650,6 +2028,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         stopAutoScroll()
         eqJob?.cancel()
+        heroTypewriterAnimator?.cancel()
         cardStrokeAnimator?.cancel()
         reSyncJob?.cancel()
         lyricsLoadJob?.cancel()

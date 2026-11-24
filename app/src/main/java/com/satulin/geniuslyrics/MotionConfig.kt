@@ -389,7 +389,13 @@ object MotionUtils {
         }
 
         val sungColor = Color.WHITE
-        val activeWordColor = Color.parseColor("#39FF88")
+        val activeStartColor = Color.parseColor("#00E5FF")
+        val activeEndColor = Color.parseColor("#39FF88")
+        val activeWordColor = ArgbEvaluator().evaluate(
+            beat.activeWordProgress.coerceIn(0f, 1f),
+            activeStartColor,
+            activeEndColor
+        ) as Int
         val upcomingColor = Color.parseColor("#5E6878")
 
         for (i in beat.tokens.indices) {
