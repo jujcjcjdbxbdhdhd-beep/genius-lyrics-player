@@ -29,13 +29,14 @@ data class LyricsResult(
     val sourceUrl: String = "",
     val isSynced: Boolean = false,
     val sourceName: String = "Spotify",
-    val geniusUrl: String = ""
+    val geniusUrl: String = "",
+    val lrcDurationMs: Long = 0L
 )
 
 object GeniusLyricsFetcher {
 
     private const val TAG = "GeniusLyricsFetcher"
-    private const val CACHE_VERSION = "v5_"
+    private const val CACHE_VERSION = "v6_"
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
@@ -314,18 +315,54 @@ object GeniusLyricsFetcher {
         return false
     }
 
+    private val REPEAT_TAG_REGEX = Regex("[\\(\\[](?:[xх×]\\s*(\\d)|(\\d)\\s*[xх×])[\\)\\]]\\s*$", RegexOption.IGNORE_CASE)
+    private val TEMPO_MODIFIER_REGEX = Regex("(?:slowed|reverb|sped\\s*up|speed\\s*up|nightcore|замедленн|ускоренн)", RegexOption.IGNORE_CASE)
+
+    /**
+     * Musical-cadence timestamp estimator for unsynced (Genius) lyrics.
+     * Instead of linear character weighting (which causes short hook lines to rush ahead
+     * and dense rap verses to lag behind), anchors each line to musical bar duration (~1 bar)
+     * with gentle word-count modulation, section-header breath pauses, and repeat-tag multipliers.
+     */
     fun estimateLineTimestamps(lines: List<LyricLine>, durationMs: Long): List<LyricLine> {
         if (lines.isEmpty() || durationMs <= 10_000L) return lines
-        val introMs = (durationMs * 0.04).toLong().coerceIn(2000L, 8000L)
-        val outroMs = (durationMs * 0.05).toLong().coerceIn(2000L, 10000L)
+
+        val firstText = lines.first().text.trim().lowercase()
+        val startsWithIntroSection = firstText.startsWith("[интро") || firstText.startsWith("[intro")
+        val introMs = if (startsWithIntroSection) {
+            (durationMs * 0.042).toLong().coerceIn(2000L, 6200L)
+        } else {
+            (durationMs * 0.072).toLong().coerceIn(3200L, 10500L)
+        }
+        val outroMs = (durationMs * 0.065).toLong().coerceIn(3000L, 12000L)
         val activeWindow = (durationMs - introMs - outroMs).coerceAtLeast(5000L)
 
-        val weights = lines.map { line ->
+        val weights = lines.mapIndexed { idx, line ->
             val trimmed = line.text.trim()
-            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-                2.0
+            val isHeader = trimmed.startsWith("[") && trimmed.endsWith("]")
+            if (isHeader) {
+                when {
+                    idx == 0 -> 0.35
+                    trimmed.lowercase().startsWith("[аутро") || trimmed.lowercase().startsWith("[outro") -> 0.85
+                    else -> 0.65
+                }
             } else {
-                trimmed.length.coerceIn(6, 60).toDouble()
+                val words = trimmed.split(Regex("\\s+")).count { it.isNotBlank() }.coerceIn(1, 16)
+                val chars = trimmed.length.coerceIn(4, 64)
+                val repeatMatch = REPEAT_TAG_REGEX.find(trimmed)
+                val repeatCount = repeatMatch?.groupValues
+                    ?.drop(1)
+                    ?.firstOrNull { it.isNotBlank() }
+                    ?.toIntOrNull()
+                    ?.coerceIn(2, 4) ?: 1
+                val repeatMult = when (repeatCount) {
+                    2 -> 1.85
+                    3 -> 2.60
+                    4 -> 3.25
+                    else -> 1.0
+                }
+                val baseBar = 0.74 + (words * 0.055) + (chars / 56.0) * 0.26
+                baseBar * repeatMult
             }
         }
         val totalWeight = weights.sum().coerceAtLeast(1.0)
@@ -336,6 +373,102 @@ object GeniusLyricsFetcher {
             cumulative += weights[idx]
             line.copy(timeMs = ts)
         }
+    }
+
+    /**
+     * Adapts lyrics timestamps to the actual playing track's duration.
+     * - For unsynced lyrics: estimates musical-bar timestamps across trackDurationMs.
+     * - For synced LRC lyrics: fills any untagged intermediate lines and automatically scales
+     *   timestamps when playing a slowed/sped-up/pitched version whose duration differs from LRC catalog duration.
+     */
+    fun adaptLyricsToTrackDuration(
+        result: LyricsResult,
+        trackDurationMs: Long,
+        rawTitle: String = ""
+    ): List<LyricLine> {
+        val rawLines = result.lines
+        if (rawLines.isEmpty()) return rawLines
+
+        if (!result.isSynced) {
+            return if (trackDurationMs > 10_000L) {
+                estimateLineTimestamps(rawLines, trackDurationMs)
+            } else {
+                rawLines
+            }
+        }
+
+        // Fill any missing (-1L) timestamps inside synced LRC by interpolating between neighbors
+        val filled = fillMissingSyncedTimestamps(rawLines, trackDurationMs)
+        if (trackDurationMs <= 15_000L) return filled
+
+        val lrcDur = result.lrcDurationMs
+        val maxLineTs = filled.maxOfOrNull { it.timeMs } ?: -1L
+        val hasTempoTag = TEMPO_MODIFIER_REGEX.containsMatchIn(rawTitle) ||
+            TEMPO_MODIFIER_REGEX.containsMatchIn(result.title)
+
+        var scaleRatio = 1.0
+        if (lrcDur > 15_000L) {
+            val diffMs = kotlin.math.abs(trackDurationMs - lrcDur)
+            val ratio = trackDurationMs.toDouble() / lrcDur.toDouble()
+            if (hasTempoTag && diffMs > 1500L && ratio in 0.58..1.70) {
+                scaleRatio = ratio
+            } else if (diffMs > 3000L && ratio in 0.72..1.38) {
+                val lyricsOverflowTrack = maxLineTs > trackDurationMs - 1200L
+                val isTypicalTempoShift = (ratio in 0.75..0.94 || ratio in 1.06..1.35) && maxLineTs >= (lrcDur * 0.62).toLong()
+                if (lyricsOverflowTrack || isTypicalTempoShift) {
+                    scaleRatio = ratio
+                }
+            }
+        } else if (maxLineTs > trackDurationMs - 800L) {
+            val impliedLrcDur = maxLineTs + 5000L
+            val ratio = trackDurationMs.toDouble() / impliedLrcDur.toDouble()
+            if (ratio in 0.58..0.97) {
+                scaleRatio = ratio
+            }
+        }
+
+        if (kotlin.math.abs(scaleRatio - 1.0) < 0.02) {
+            return filled
+        }
+
+        val maxAllowedTs = (trackDurationMs - 400L).coerceAtLeast(0L)
+        return filled.map { line ->
+            if (line.timeMs >= 0L) {
+                line.copy(timeMs = (line.timeMs * scaleRatio).toLong().coerceIn(0L, maxAllowedTs))
+            } else {
+                line
+            }
+        }
+    }
+
+    private fun fillMissingSyncedTimestamps(lines: List<LyricLine>, trackDurationMs: Long): List<LyricLine> {
+        if (lines.none { it.timeMs < 0L } || lines.all { it.timeMs < 0L }) return lines
+        val mutable = lines.toMutableList()
+        var i = 0
+        while (i < mutable.size) {
+            if (mutable[i].timeMs < 0L) {
+                val prevTs = if (i > 0) mutable[i - 1].timeMs.coerceAtLeast(0L) else 0L
+                var nextIdx = i + 1
+                while (nextIdx < mutable.size && mutable[nextIdx].timeMs < 0L) {
+                    nextIdx++
+                }
+                val nextTs = if (nextIdx < mutable.size) {
+                    mutable[nextIdx].timeMs
+                } else {
+                    maxOf(prevTs + (nextIdx - i) * 2500L, trackDurationMs.takeIf { it > prevTs } ?: (prevTs + 3000L))
+                }
+                val spanCount = (nextIdx - i + 1).coerceAtLeast(2)
+                for (k in i until nextIdx) {
+                    val step = k - i + 1
+                    val interp = prevTs + ((nextTs - prevTs) * step) / spanCount
+                    mutable[k] = mutable[k].copy(timeMs = interp.coerceAtLeast(prevTs))
+                }
+                i = nextIdx
+            } else {
+                i++
+            }
+        }
+        return mutable
     }
 
     /**
@@ -371,11 +504,24 @@ object GeniusLyricsFetcher {
         return -1L
     }
 
+    private fun scoreSyncedCandidateDuration(lrcDurationMs: Long, trackDurationMs: Long): Int {
+        if (trackDurationMs <= 10_000L || lrcDurationMs <= 10_000L) return 0
+        val diff = kotlin.math.abs(trackDurationMs - lrcDurationMs)
+        return when {
+            diff <= 2_500L -> 120
+            diff <= 5_000L -> 80
+            diff <= 10_000L -> 30
+            diff > 25_000L -> -60
+            else -> 0
+        }
+    }
+
     private fun pickBestResult(
         results: List<LyricsResult?>,
         expectedTitle: String = "",
         expectedArtist: String = "",
-        requireArtistMatch: Boolean = false
+        requireArtistMatch: Boolean = false,
+        trackDurationMs: Long = 0L
     ): LyricsResult? {
         val valid = results.filterNotNull().filter { it.lines.isNotEmpty() }
         if (valid.isEmpty()) return null
@@ -389,8 +535,14 @@ object GeniusLyricsFetcher {
         }
         if (strictValid.isEmpty()) return null
 
-        // 1. Verified synced lyrics (karaoke timestamps) with real body (>2 lines)
-        strictValid.firstOrNull { it.isSynced && it.lines.size >= 3 }?.let { return it }
+        // 1. Verified synced lyrics (karaoke timestamps) with real body (>2 lines), ranked by duration match
+        val syncedCandidates = strictValid.filter { it.isSynced && it.lines.size >= 3 }
+        if (syncedCandidates.isNotEmpty()) {
+            return syncedCandidates.maxByOrNull { cand ->
+                scoreSyncedCandidateDuration(cand.lrcDurationMs, trackDurationMs) +
+                    (if (expectedArtist.isNotBlank() && isArtistMatch(expectedArtist, cand.artist)) 40 else 0)
+            }
+        }
         // 2. Genius.com plain lyrics
         strictValid.firstOrNull { it.sourceName.contains("Genius", ignoreCase = true) }?.let { return it }
         // 3. Other verified plain/short lyrics
@@ -475,7 +627,8 @@ object GeniusLyricsFetcher {
         title: String,
         rawTitle: String = "",
         artistFromTitle: Boolean = false,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        trackDurationMs: Long = 0L
     ): Result<LyricsResult> = withContext(Dispatchers.IO) {
         cleanOldCaches(context)
 
@@ -542,54 +695,90 @@ object GeniusLyricsFetcher {
         }
 
         // =========================================================================
-        // STAGE 1: FAST PARALLEL SEARCH — GENIUS OKHTTP + LRCLIB STRICT
-        // Uses user's parsed (primaryArtist, strippedTitle) directly before any resolver.
+        // STAGE 1: FAST PARALLEL SEARCH — GENIUS OKHTTP + ALL SYNCED LRC PROVIDERS
+        // Checks LRCLIB, NetEase, and QQ concurrently with Genius so synced karaoke
+        // timestamps are never discarded in favor of unsynced Genius plain text!
         // =========================================================================
-        val (stage1Genius, stage1Lrclib) = coroutineScope {
+        val (stage1Genius, stage1SyncedOrPlain) = coroutineScope {
             val dGenius = async {
                 fetchGeniusOkHttp(primaryArtist, strippedTitle, requireArtist = artistTrusted)
             }
             val dLrclib = async {
                 if (primaryArtist.isBlank()) {
-                    null
+                    if (!artistTrusted && strippedTitle.length >= 4) {
+                        searchLrclibStrict(
+                            query = strippedTitle,
+                            expectedArtist = "",
+                            expectedTitle = strippedTitle,
+                            requireArtist = false,
+                            trackDurationMs = trackDurationMs
+                        )
+                    } else null
                 } else {
-                    val exact = fetchLrclibExact(primaryArtist, strippedTitle)
-                        ?: (if (!transTitle.equals(strippedTitle, true)) fetchLrclibExact(primaryArtist, transTitle) else null)
-                        ?: (if (secondaryArtist.isNotBlank()) fetchLrclibExact(secondaryArtist, strippedTitle) else null)
-                    val searched = if (exact?.isSynced == true) null else {
+                    val exact = fetchLrclibExact(primaryArtist, strippedTitle, trackDurationMs)
+                        ?: (if (!transTitle.equals(strippedTitle, true)) fetchLrclibExact(primaryArtist, transTitle, trackDurationMs) else null)
+                        ?: (if (secondaryArtist.isNotBlank()) fetchLrclibExact(secondaryArtist, strippedTitle, trackDurationMs) else null)
+                    val searched = if (exact?.isSynced == true &&
+                        (trackDurationMs <= 10_000L || exact.lrcDurationMs <= 0L || kotlin.math.abs(trackDurationMs - exact.lrcDurationMs) <= 4000L)
+                    ) {
+                        null
+                    } else {
                         searchLrclibStrict(
                             query = "$primaryArtist $strippedTitle",
                             expectedArtist = primaryArtist,
                             expectedTitle = strippedTitle,
-                            requireArtist = artistTrusted
-                        )
+                            requireArtist = artistTrusted,
+                            trackDurationMs = trackDurationMs
+                        ) ?: (if (!transTitle.equals(strippedTitle, true)) {
+                            searchLrclibStrict(
+                                query = "$primaryArtist $transTitle",
+                                expectedArtist = primaryArtist,
+                                expectedTitle = strippedTitle,
+                                requireArtist = artistTrusted,
+                                trackDurationMs = trackDurationMs
+                            )
+                        } else null)
                     }
                     pickBestResult(
                         listOf(exact, searched),
                         expectedTitle = strippedTitle,
                         expectedArtist = primaryArtist,
-                        requireArtistMatch = artistTrusted
+                        requireArtistMatch = artistTrusted,
+                        trackDurationMs = trackDurationMs
                     )
                 }
             }
-            Pair(dGenius.await(), dLrclib.await())
+            val dNetEase = async {
+                if (primaryArtist.isBlank()) null
+                else fetchNetEase(primaryArtist, strippedTitle, requireArtist = artistTrusted, trackDurationMs = trackDurationMs)
+            }
+            val dQQ = async {
+                if (primaryArtist.isBlank()) null
+                else fetchQQMusic(primaryArtist, strippedTitle, requireArtist = artistTrusted, trackDurationMs = trackDurationMs)
+            }
+            val bestLrc = pickBestResult(
+                listOf(dLrclib.await(), dNetEase.await(), dQQ.await()),
+                expectedTitle = strippedTitle,
+                expectedArtist = primaryArtist,
+                requireArtistMatch = artistTrusted,
+                trackDurationMs = trackDurationMs
+            )
+            Pair(dGenius.await(), bestLrc)
         }
 
-        if (stage1Lrclib != null && stage1Lrclib.isSynced && stage1Lrclib.lines.size >= 3) {
+        if (stage1SyncedOrPlain != null && stage1SyncedOrPlain.isSynced && stage1SyncedOrPlain.lines.size >= 3) {
             val withGeniusUrl = if (stage1Genius?.sourceUrl?.isNotBlank() == true) {
-                stage1Lrclib.copy(geniusUrl = stage1Genius.sourceUrl)
+                stage1SyncedOrPlain.copy(geniusUrl = stage1Genius.sourceUrl)
             } else {
-                stage1Lrclib
+                stage1SyncedOrPlain
             }
             return@withContext cacheAndReturn(withGeniusUrl)
         }
 
-        if (stage1Genius != null && stage1Genius.lines.isNotEmpty()) {
-            return@withContext cacheAndReturn(stage1Genius)
-        }
-
         // =========================================================================
-        // STAGE 2: STRICT YANDEX RESOLVER + CHROMIUM WEBVIEW GENIUS + NETEASE/QQ
+        // STAGE 2: STRICT YANDEX RESOLVER + SYNCED LRC RETRY + GENIUS FALLBACK
+        // Before settling for unsynced plain lyrics, check if Yandex Music resolves
+        // a canonical artist/title that unlocks synced LRC timestamps.
         // =========================================================================
         val yandexResolved = resolveViaYandexMusic(
             primaryArtist = primaryArtist,
@@ -599,28 +788,59 @@ object GeniusLyricsFetcher {
         val ymArtist = yandexResolved?.artist?.ifBlank { primaryArtist } ?: primaryArtist
         val ymTitle = yandexResolved?.title?.ifBlank { strippedTitle } ?: strippedTitle
 
-        // If Yandex resolved to a cleaner canonical artist/title, retry Genius OkHttp & LRCLIB strictly
+        var ymGeniusResult: LyricsResult? = null
+        var ymBestLrc: LyricsResult? = null
+
         if (yandexResolved != null && (!ymTitle.equals(strippedTitle, true) || !ymArtist.equals(primaryArtist, true))) {
-            val (ymGenius, ymLrclib) = coroutineScope {
+            val (ymG, ymL) = coroutineScope {
                 val dg = async {
-                    fetchGeniusOkHttp(ymArtist, ymTitle, requireArtist = true)
+                    if (stage1Genius != null && stage1Genius.lines.isNotEmpty()) stage1Genius
+                    else fetchGeniusOkHttp(ymArtist, ymTitle, requireArtist = true)
                 }
                 val dl = async {
-                    val exact = fetchLrclibExact(ymArtist, ymTitle)
+                    val exact = fetchLrclibExact(ymArtist, ymTitle, trackDurationMs)
                     val searched = if (exact?.isSynced == true) null else {
-                        searchLrclibStrict("$ymArtist $ymTitle", ymArtist, ymTitle, requireArtist = true)
+                        searchLrclibStrict("$ymArtist $ymTitle", ymArtist, ymTitle, requireArtist = true, trackDurationMs = trackDurationMs)
                     }
-                    pickBestResult(listOf(exact, searched), expectedTitle = ymTitle, expectedArtist = ymArtist, requireArtistMatch = true)
+                    pickBestResult(
+                        listOf(exact, searched),
+                        expectedTitle = ymTitle,
+                        expectedArtist = ymArtist,
+                        requireArtistMatch = true,
+                        trackDurationMs = trackDurationMs
+                    )
                 }
-                Pair(dg.await(), dl.await())
+                val dn = async {
+                    fetchNetEase(ymArtist, ymTitle, requireArtist = true, trackDurationMs = trackDurationMs)
+                }
+                val dq = async {
+                    fetchQQMusic(ymArtist, ymTitle, requireArtist = true, trackDurationMs = trackDurationMs)
+                }
+                val bestYmLrc = pickBestResult(
+                    listOf(dl.await(), dn.await(), dq.await()),
+                    expectedTitle = ymTitle,
+                    expectedArtist = ymArtist,
+                    requireArtistMatch = true,
+                    trackDurationMs = trackDurationMs
+                )
+                Pair(dg.await(), bestYmLrc)
             }
-            if (ymLrclib != null && ymLrclib.isSynced && ymLrclib.lines.size >= 3) {
-                val withUrl = if (ymGenius?.sourceUrl?.isNotBlank() == true) ymLrclib.copy(geniusUrl = ymGenius.sourceUrl) else ymLrclib
+            ymGeniusResult = ymG
+            ymBestLrc = ymL
+
+            if (ymBestLrc != null && ymBestLrc.isSynced && ymBestLrc.lines.size >= 3) {
+                val gUrl = stage1Genius?.sourceUrl?.ifBlank { ymGeniusResult?.sourceUrl ?: "" } ?: (ymGeniusResult?.sourceUrl ?: "")
+                val withUrl = if (gUrl.isNotBlank()) ymBestLrc.copy(geniusUrl = gUrl) else ymBestLrc
                 return@withContext cacheAndReturn(withUrl)
             }
-            if (ymGenius != null && ymGenius.lines.isNotEmpty()) {
-                return@withContext cacheAndReturn(ymGenius)
-            }
+        }
+
+        // Now if no synced LRC was found anywhere, return Genius plain text if available
+        if (stage1Genius != null && stage1Genius.lines.isNotEmpty()) {
+            return@withContext cacheAndReturn(stage1Genius)
+        }
+        if (ymGeniusResult != null && ymGeniusResult.lines.isNotEmpty()) {
+            return@withContext cacheAndReturn(ymGeniusResult)
         }
 
         // Genius Chromium WebView engine (for Cloudflare-protected pages / snippets)
@@ -639,43 +859,27 @@ object GeniusLyricsFetcher {
             Log.w(TAG, "Genius WebView stage error: ${e.message}")
         }
 
-        // Parallel NetEase & QQ strict fallback (using both original and Yandex canonical metadata)
-        val stage2Fallbacks = coroutineScope {
-            val dNetEaseOrig = async {
-                if (primaryArtist.isBlank()) null
-                else fetchNetEase(primaryArtist, strippedTitle, requireArtist = artistTrusted)
-            }
-            val dQQOrig = async {
-                if (primaryArtist.isBlank()) null
-                else fetchQQMusic(primaryArtist, strippedTitle, requireArtist = artistTrusted)
-            }
-            val dNetEaseYm = async {
-                if (yandexResolved != null && ymArtist.isNotBlank() && (!ymTitle.equals(strippedTitle, true) || !ymArtist.equals(primaryArtist, true))) {
-                    fetchNetEase(ymArtist, ymTitle, requireArtist = true)
-                } else null
-            }
-            val dQQYm = async {
-                if (yandexResolved != null && ymArtist.isNotBlank() && (!ymTitle.equals(strippedTitle, true) || !ymArtist.equals(primaryArtist, true))) {
-                    fetchQQMusic(ymArtist, ymTitle, requireArtist = true)
-                } else null
-            }
-            listOfNotNull(dNetEaseOrig.await(), dQQOrig.await(), dNetEaseYm.await(), dQQYm.await())
-        }
-
         val stage2Pick = pickBestResult(
-            results = stage2Fallbacks + listOfNotNull(stage1Lrclib),
+            results = listOfNotNull(ymBestLrc, stage1SyncedOrPlain),
             expectedTitle = ymTitle,
             expectedArtist = ymArtist.ifBlank { primaryArtist },
-            requireArtistMatch = artistTrusted
+            requireArtistMatch = artistTrusted,
+            trackDurationMs = trackDurationMs
         )
         if (stage2Pick != null) return@withContext cacheAndReturn(stage2Pick)
 
         // Check swapped "Title - Artist" when dash came from title
         if (primaryArtist.isNotBlank() && strippedTitle.isNotBlank() && parsed.artistFromTitle) {
             val inverted = coroutineScope {
-                val dl = async { fetchLrclibExact(strippedTitle, primaryArtist) }
-                val dn = async { fetchNetEase(strippedTitle, primaryArtist, requireArtist = true) }
-                pickBestResult(listOf(dl.await(), dn.await()), expectedTitle = primaryArtist, expectedArtist = strippedTitle, requireArtistMatch = true)
+                val dl = async { fetchLrclibExact(strippedTitle, primaryArtist, trackDurationMs) }
+                val dn = async { fetchNetEase(strippedTitle, primaryArtist, requireArtist = true, trackDurationMs = trackDurationMs) }
+                pickBestResult(
+                    listOf(dl.await(), dn.await()),
+                    expectedTitle = primaryArtist,
+                    expectedArtist = strippedTitle,
+                    requireArtistMatch = true,
+                    trackDurationMs = trackDurationMs
+                )
             }
             if (inverted != null) return@withContext cacheAndReturn(inverted)
         }
@@ -689,16 +893,17 @@ object GeniusLyricsFetcher {
             val targetTitle = ymTitle.ifBlank { strippedTitle }
             val stage3Best = coroutineScope {
                 val dLrclib = async {
-                    searchLrclibStrict(targetTitle, "", targetTitle, requireArtist = false)
-                        ?: (if (!transTitle.equals(targetTitle, true)) searchLrclibStrict(transTitle, "", transTitle, requireArtist = false) else null)
+                    searchLrclibStrict(targetTitle, "", targetTitle, requireArtist = false, trackDurationMs = trackDurationMs)
+                        ?: (if (!transTitle.equals(targetTitle, true)) searchLrclibStrict(transTitle, "", transTitle, requireArtist = false, trackDurationMs = trackDurationMs) else null)
                 }
-                val dNetEase = async { fetchNetEase("", targetTitle, requireArtist = false) }
-                val dQQ = async { fetchQQMusic("", targetTitle, requireArtist = false) }
+                val dNetEase = async { fetchNetEase("", targetTitle, requireArtist = false, trackDurationMs = trackDurationMs) }
+                val dQQ = async { fetchQQMusic("", targetTitle, requireArtist = false, trackDurationMs = trackDurationMs) }
                 pickBestResult(
                     listOf(dLrclib.await(), dNetEase.await(), dQQ.await()),
                     expectedTitle = targetTitle,
                     expectedArtist = "",
-                    requireArtistMatch = false
+                    requireArtistMatch = false,
+                    trackDurationMs = trackDurationMs
                 )
             }
             if (stage3Best != null) return@withContext cacheAndReturn(stage3Best)
@@ -790,11 +995,18 @@ object GeniusLyricsFetcher {
 
     // --- LRCLIB EXACT GET ---
 
-    private fun fetchLrclibExact(artist: String, title: String): LyricsResult? {
-        val url = "https://lrclib.net/api/get?artist_name=" + URLEncoder.encode(artist, "UTF-8") +
+    private fun fetchLrclibExact(artist: String, title: String, trackDurationMs: Long = 0L): LyricsResult? {
+        val baseUrl = "https://lrclib.net/api/get?artist_name=" + URLEncoder.encode(artist, "UTF-8") +
                 "&track_name=" + URLEncoder.encode(title, "UTF-8")
+        val urlWithDur = if (trackDurationMs >= 15_000L) {
+            "$baseUrl&duration=${(trackDurationMs / 1000L)}"
+        } else {
+            baseUrl
+        }
 
-        val jsonStr = executeGetString(url) ?: return null
+        val jsonStr = executeGetString(urlWithDur)
+            ?: (if (urlWithDur != baseUrl) executeGetString(baseUrl) else null)
+            ?: return null
         if (!jsonStr.startsWith("{")) return null
 
         val obj = JSONObject(jsonStr)
@@ -805,6 +1017,8 @@ object GeniusLyricsFetcher {
             return null
         }
 
+        val durSec = obj.optDouble("duration", 0.0)
+        val itemDurMs = if (!durSec.isNaN() && durSec > 0.0) (durSec * 1000.0).toLong() else 0L
         val synced = obj.optCleanString("syncedLyrics")
         val plain = obj.optCleanString("plainLyrics")
 
@@ -818,7 +1032,8 @@ object GeniusLyricsFetcher {
                     plainLyrics = plain.ifBlank { lines.joinToString("\n") { it.text } },
                     sourceUrl = "https://lrclib.net",
                     isSynced = true,
-                    sourceName = "Spotify (Караоке)"
+                    sourceName = "Spotify (Караоке)",
+                    lrcDurationMs = itemDurMs
                 )
             }
         }
@@ -833,7 +1048,8 @@ object GeniusLyricsFetcher {
                     plainLyrics = plain,
                     sourceUrl = "https://lrclib.net",
                     isSynced = false,
-                    sourceName = "Spotify Lyrics"
+                    sourceName = "Spotify Lyrics",
+                    lrcDurationMs = itemDurMs
                 )
             }
         }
@@ -841,13 +1057,14 @@ object GeniusLyricsFetcher {
         return null
     }
 
-    // --- LRCLIB SEARCH WITH STRICT TITLE & ARTIST VALIDATION ---
+    // --- LRCLIB SEARCH WITH STRICT TITLE, ARTIST & DURATION VALIDATION ---
 
     private fun searchLrclibStrict(
         query: String,
         expectedArtist: String,
         expectedTitle: String,
-        requireArtist: Boolean
+        requireArtist: Boolean,
+        trackDurationMs: Long = 0L
     ): LyricsResult? {
         val url = "https://lrclib.net/api/search?q=" + URLEncoder.encode(query, "UTF-8")
         val jsonStr = executeGetString(url) ?: return null
@@ -869,62 +1086,77 @@ object GeniusLyricsFetcher {
             return null
         }
 
-        // Pass 1: Synced karaoke match
+        val syncedMatches = mutableListOf<LyricsResult>()
+        val plainMatches = mutableListOf<LyricsResult>()
+
         for (i in 0 until arr.length()) {
             val item = arr.getJSONObject(i)
             val track = item.optCleanString("trackName")
             val art = item.optCleanString("artistName")
             val matchedNames = lrclibMatch(track, art) ?: continue
+            val durSec = item.optDouble("duration", 0.0)
+            val itemDurMs = if (!durSec.isNaN() && durSec > 0.0) (durSec * 1000.0).toLong() else 0L
 
             val synced = item.optCleanString("syncedLyrics")
             if (synced.isNotBlank()) {
                 val lines = parseLrcLines(synced)
                 if (lines.size >= 3) {
-                    return LyricsResult(
-                        title = matchedNames.first,
-                        artist = matchedNames.second,
-                        lines = lines,
-                        plainLyrics = item.optCleanString("plainLyrics").ifBlank { lines.joinToString("\n") { it.text } },
-                        sourceUrl = "https://lrclib.net",
-                        isSynced = true,
-                        sourceName = "Spotify (Караоке)"
+                    syncedMatches.add(
+                        LyricsResult(
+                            title = matchedNames.first,
+                            artist = matchedNames.second,
+                            lines = lines,
+                            plainLyrics = item.optCleanString("plainLyrics").ifBlank { lines.joinToString("\n") { it.text } },
+                            sourceUrl = "https://lrclib.net",
+                            isSynced = true,
+                            sourceName = "Spotify (Караоке)",
+                            lrcDurationMs = itemDurMs
+                        )
                     )
+                    continue
                 }
             }
-        }
-
-        // Pass 2: Plain lyrics match
-        for (i in 0 until arr.length()) {
-            val item = arr.getJSONObject(i)
-            val track = item.optCleanString("trackName")
-            val art = item.optCleanString("artistName")
-            val matchedNames = lrclibMatch(track, art) ?: continue
 
             val plain = item.optCleanString("plainLyrics")
             if (plain.isNotBlank()) {
                 val lines = sanitizeLyricsLines(plain)
                 if (lines.isNotEmpty()) {
-                    return LyricsResult(
-                        title = matchedNames.first,
-                        artist = matchedNames.second,
-                        lines = lines,
-                        plainLyrics = plain,
-                        sourceUrl = "https://lrclib.net",
-                        isSynced = false,
-                        sourceName = "Spotify Lyrics"
+                    plainMatches.add(
+                        LyricsResult(
+                            title = matchedNames.first,
+                            artist = matchedNames.second,
+                            lines = lines,
+                            plainLyrics = plain,
+                            sourceUrl = "https://lrclib.net",
+                            isSynced = false,
+                            sourceName = "Spotify Lyrics",
+                            lrcDurationMs = itemDurMs
+                        )
                     )
                 }
             }
         }
 
-        return null
+        if (syncedMatches.isNotEmpty()) {
+            return syncedMatches.maxByOrNull { cand ->
+                scoreSyncedCandidateDuration(cand.lrcDurationMs, trackDurationMs) +
+                    (if (expectedArtist.isNotBlank() && isArtistMatch(expectedArtist, cand.artist)) 40 else 0)
+            }
+        }
+
+        return plainMatches.firstOrNull()
     }
 
     // --- NETEASE CLOUD MUSIC ---
 
-    private fun fetchNetEase(artist: String, title: String, requireArtist: Boolean): LyricsResult? {
+    private fun fetchNetEase(
+        artist: String,
+        title: String,
+        requireArtist: Boolean,
+        trackDurationMs: Long = 0L
+    ): LyricsResult? {
         val query = if (requireArtist && artist.isNotBlank()) "$artist $title" else title
-        val searchUrl = "https://music.163.com/api/search/get/?s=" + URLEncoder.encode(query, "UTF-8") + "&type=1&limit=5"
+        val searchUrl = "https://music.163.com/api/search/get/?s=" + URLEncoder.encode(query, "UTF-8") + "&type=1&limit=6"
         val jsonStr = executeGetString(searchUrl) ?: return null
         if (!jsonStr.startsWith("{")) return null
 
@@ -932,6 +1164,14 @@ object GeniusLyricsFetcher {
         val resultObj = root.optJSONObject("result") ?: return null
         val songsArr = resultObj.optJSONArray("songs") ?: return null
 
+        data class NetEaseCandidate(
+            val songId: Long,
+            val songName: String,
+            val primaryArtist: String,
+            val durationMs: Long
+        )
+
+        val candidates = mutableListOf<NetEaseCandidate>()
         for (i in 0 until songsArr.length()) {
             val song = songsArr.getJSONObject(i)
             val songName = song.optCleanString("name")
@@ -955,48 +1195,61 @@ object GeniusLyricsFetcher {
 
             val songId = song.optLong("id", -1L)
             if (songId <= 0) continue
+            val songDurMs = song.optLong("duration", song.optLong("dt", 0L)).coerceAtLeast(0L)
+            candidates.add(
+                NetEaseCandidate(
+                    songId = songId,
+                    songName = songName,
+                    primaryArtist = if (songArtists.isNotEmpty()) songArtists.first() else artist,
+                    durationMs = songDurMs
+                )
+            )
+        }
 
-            val lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=$songId&lv=-1&kv=-1&tv=-1"
+        val ordered = candidates.sortedByDescending { scoreSyncedCandidateDuration(it.durationMs, trackDurationMs) }
+        var plainFallback: LyricsResult? = null
+
+        for (cand in ordered) {
+            val lyricUrl = "https://music.163.com/api/song/lyric?os=pc&id=${cand.songId}&lv=-1&kv=-1&tv=-1"
             val lyricJson = executeGetString(lyricUrl) ?: continue
             val lrcRoot = JSONObject(lyricJson)
             val lrcObj = lrcRoot.optJSONObject("lrc") ?: continue
             val rawLyric = lrcObj.optCleanString("lyric")
             if (rawLyric.length < 30) continue
 
-            val cleanedLyric = rawLyric.lines()
-                .filter { line ->
-                    !line.startsWith("作词") &&
-                    !line.startsWith("作曲") &&
-                    !line.startsWith("编曲") &&
-                    !line.startsWith("混音")
-                }
-                .joinToString("\n")
-
-            val hasTimestamps = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(cleanedLyric)
-            val lines = if (hasTimestamps) parseLrcLines(cleanedLyric) else sanitizeLyricsLines(cleanedLyric)
+            val hasTimestamps = Regex("\\[\\d{2}:\\d{2}[.:]\\d{2,3}\\]").containsMatchIn(rawLyric)
+            val lines = if (hasTimestamps) parseLrcLines(rawLyric) else sanitizeLyricsLines(rawLyric)
             val isSynced = hasTimestamps && lines.size >= 3
 
             if (lines.isNotEmpty()) {
-                return LyricsResult(
-                    title = songName,
-                    artist = if (songArtists.isNotEmpty()) songArtists.first() else artist,
+                val res = LyricsResult(
+                    title = cand.songName,
+                    artist = cand.primaryArtist,
                     lines = lines,
                     plainLyrics = lines.joinToString("\n") { it.text },
-                    sourceUrl = "https://music.163.com/#/song?id=$songId",
+                    sourceUrl = "https://music.163.com/#/song?id=${cand.songId}",
                     isSynced = isSynced,
-                    sourceName = if (isSynced) "Spotify (NetEase LRC)" else "Spotify (NetEase)"
+                    sourceName = if (isSynced) "Spotify (NetEase LRC)" else "Spotify (NetEase)",
+                    lrcDurationMs = cand.durationMs
                 )
+                if (isSynced) return res
+                if (plainFallback == null) plainFallback = res
             }
         }
 
-        return null
+        return plainFallback
     }
 
     // --- QQ MUSIC API ---
 
-    private fun fetchQQMusic(artist: String, title: String, requireArtist: Boolean): LyricsResult? {
+    private fun fetchQQMusic(
+        artist: String,
+        title: String,
+        requireArtist: Boolean,
+        trackDurationMs: Long = 0L
+    ): LyricsResult? {
         val query = if (requireArtist && artist.isNotBlank()) "$artist $title" else title
-        val searchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=" + URLEncoder.encode(query, "UTF-8") + "&format=json&n=5"
+        val searchUrl = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=" + URLEncoder.encode(query, "UTF-8") + "&format=json&n=6"
         val jsonStr = executeGetString(searchUrl, referer = "https://y.qq.com/") ?: return null
         if (!jsonStr.startsWith("{")) return null
 
@@ -1005,6 +1258,14 @@ object GeniusLyricsFetcher {
         val songObj = dataObj.optJSONObject("song") ?: return null
         val listArr = songObj.optJSONArray("list") ?: return null
 
+        data class QQCandidate(
+            val songmid: String,
+            val songName: String,
+            val primaryArtist: String,
+            val durationMs: Long
+        )
+
+        val candidates = mutableListOf<QQCandidate>()
         for (i in 0 until listArr.length()) {
             val s = listArr.getJSONObject(i)
             val songName = s.optCleanString("songname")
@@ -1028,31 +1289,48 @@ object GeniusLyricsFetcher {
 
             val songmid = s.optCleanString("songmid")
             if (songmid.isBlank()) continue
+            val intervalSec = s.optLong("interval", 0L).coerceAtLeast(0L)
+            candidates.add(
+                QQCandidate(
+                    songmid = songmid,
+                    songName = songName,
+                    primaryArtist = if (singers.isNotEmpty()) singers.first() else artist,
+                    durationMs = intervalSec * 1000L
+                )
+            )
+        }
 
-            val lyricUrl = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=$songmid&format=json&nobase64=1"
+        val ordered = candidates.sortedByDescending { scoreSyncedCandidateDuration(it.durationMs, trackDurationMs) }
+        var plainFallback: LyricsResult? = null
+
+        for (cand in ordered) {
+            val lyricUrl = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${cand.songmid}&format=json&nobase64=1"
             val lyricJson = executeGetString(lyricUrl, referer = "https://y.qq.com/") ?: continue
             val lrcRoot = JSONObject(lyricJson)
             val rawLyric = lrcRoot.optCleanString("lyric")
             if (rawLyric.length < 30) continue
 
-            val hasTimestamps = Regex("\\[\\d{2}:\\d{2}\\.\\d{2,3}\\]").containsMatchIn(rawLyric)
+            val hasTimestamps = Regex("\\[\\d{2}:\\d{2}[.:]\\d{2,3}\\]").containsMatchIn(rawLyric)
             val lines = if (hasTimestamps) parseLrcLines(rawLyric) else sanitizeLyricsLines(rawLyric)
             val isSynced = hasTimestamps && lines.size >= 3
 
             if (lines.isNotEmpty()) {
-                return LyricsResult(
-                    title = songName,
-                    artist = if (singers.isNotEmpty()) singers.first() else artist,
+                val res = LyricsResult(
+                    title = cand.songName,
+                    artist = cand.primaryArtist,
                     lines = lines,
                     plainLyrics = lines.joinToString("\n") { it.text },
-                    sourceUrl = "https://y.qq.com/n/ryqq/songDetail/$songmid",
+                    sourceUrl = "https://y.qq.com/n/ryqq/songDetail/${cand.songmid}",
                     isSynced = isSynced,
-                    sourceName = if (isSynced) "Spotify (QQ LRC)" else "Spotify (QQ)"
+                    sourceName = if (isSynced) "Spotify (QQ LRC)" else "Spotify (QQ)",
+                    lrcDurationMs = cand.durationMs
                 )
+                if (isSynced) return res
+                if (plainFallback == null) plainFallback = res
             }
         }
 
-        return null
+        return plainFallback
     }
 
     // --- GENIUS.COM OKHTTP (SONG SEARCH API + DIRECT SLUG FALLBACK) ---
@@ -1371,36 +1649,72 @@ object GeniusLyricsFetcher {
 
     // --- PARSING & UTILITIES ---
 
-    private fun parseLrcLines(lrcText: String): List<LyricLine> {
-        val regex = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.*)")
-        val result = mutableListOf<LyricLine>()
+    private val LRC_TAG_REGEX = Regex("\\[(\\d{1,2}):(\\d{2})(?:[.:](\\d{1,3}))?\\]")
+    private val LRC_OFFSET_REGEX = Regex("\\[offset:\\s*([+-]?\\d+)\\s*\\]", RegexOption.IGNORE_CASE)
+    private val LRC_META_HEADER_REGEX = Regex("^\\[(?:ti|ar|al|by|length|offset|re|ve|id|qq|total|kana|language):.*\\]$", RegexOption.IGNORE_CASE)
+    private val LRC_CREDIT_LINE_REGEX = Regex("^(?:作词|作曲|编曲|制作人|混音|母带|录音|和声|吉他|贝斯|鼓|统筹|出品|OP|SP|词[:：]|曲[:：]|LRC\\s*by|Lyrics\\s*by)\\b.*", RegexOption.IGNORE_CASE)
+
+    fun parseLrcLines(lrcText: String): List<LyricLine> {
+        var globalOffsetMs = 0L
+        LRC_OFFSET_REGEX.find(lrcText)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { off ->
+            globalOffsetMs = off.coerceIn(-15_000L, 15_000L)
+        }
+
+        val timestamped = mutableListOf<LyricLine>()
+        val untagged = mutableListOf<Pair<Int, LyricLine>>()
 
         for (rawLine in lrcText.lines()) {
             val line = rawLine.trim()
-            val match = regex.find(line)
-            if (match != null) {
-                val min = match.groupValues[1].toLongOrNull() ?: 0L
-                val sec = match.groupValues[2].toLongOrNull() ?: 0L
-                val msStr = match.groupValues[3]
-                val ms = if (msStr.length == 2) msStr.toLong() * 10 else msStr.toLong()
-                val totalMs = (min * 60 + sec) * 1000 + ms
-                val text = match.groupValues[4].trim()
-                if (text.isNotBlank() && !text.equals("null", ignoreCase = true) && !text.equals("undefined", ignoreCase = true)) {
-                    result.add(LyricLine(timeMs = totalMs, text = text))
+            if (line.isBlank() || line.equals("null", ignoreCase = true) || line.equals("undefined", ignoreCase = true)) {
+                continue
+            }
+            if (LRC_META_HEADER_REGEX.matches(line)) {
+                continue
+            }
+
+            val matches = LRC_TAG_REGEX.findAll(line).toList()
+            if (matches.isNotEmpty()) {
+                val lastMatch = matches.last()
+                val text = line.substring(lastMatch.range.last + 1).trim()
+                if (text.isBlank() ||
+                    text.equals("null", ignoreCase = true) ||
+                    text.equals("undefined", ignoreCase = true) ||
+                    LRC_CREDIT_LINE_REGEX.matches(text)
+                ) {
+                    continue
                 }
-            } else if (line.isNotBlank() &&
-                !line.equals("null", ignoreCase = true) &&
-                !line.equals("undefined", ignoreCase = true) &&
-                !line.startsWith("[ti:") &&
-                !line.startsWith("[ar:") &&
-                !line.startsWith("[length:") &&
-                !line.startsWith("[al:") &&
-                !line.startsWith("[by:")
-            ) {
-                result.add(LyricLine(timeMs = -1L, text = line))
+                for (m in matches) {
+                    val min = m.groupValues[1].toLongOrNull() ?: 0L
+                    val sec = m.groupValues[2].toLongOrNull() ?: 0L
+                    val msStr = m.groupValues.getOrNull(3) ?: ""
+                    val ms = when (msStr.length) {
+                        1 -> (msStr.toLongOrNull() ?: 0L) * 100L
+                        2 -> (msStr.toLongOrNull() ?: 0L) * 10L
+                        3 -> msStr.toLongOrNull() ?: 0L
+                        else -> 0L
+                    }
+                    val totalMs = ((min * 60 + sec) * 1000 + ms - globalOffsetMs).coerceAtLeast(0L)
+                    timestamped.add(LyricLine(timeMs = totalMs, text = text))
+                }
+            } else if (!LRC_CREDIT_LINE_REGEX.matches(line)) {
+                untagged.add(Pair(timestamped.size, LyricLine(timeMs = -1L, text = line)))
             }
         }
-        return result
+
+        if (timestamped.isEmpty()) {
+            return untagged.map { it.second }
+        }
+
+        val sorted = timestamped.sortedBy { it.timeMs }.toMutableList()
+        if (untagged.isNotEmpty()) {
+            var offset = 0
+            for ((insertAfter, lineObj) in untagged) {
+                val idx = (insertAfter + offset).coerceIn(0, sorted.size)
+                sorted.add(idx, lineObj)
+                offset++
+            }
+        }
+        return sorted
     }
 
     private fun sanitizeLyricsLines(text: String): List<LyricLine> {
@@ -1488,6 +1802,7 @@ object GeniusLyricsFetcher {
                 put("geniusUrl", result.geniusUrl)
                 put("isSynced", result.isSynced)
                 put("sourceName", result.sourceName)
+                put("lrcDurationMs", result.lrcDurationMs)
                 val linesArray = JSONArray()
                 for (line in result.lines) {
                     linesArray.put(JSONObject().apply {
@@ -1528,7 +1843,8 @@ object GeniusLyricsFetcher {
                 sourceUrl = json.optCleanString("sourceUrl"),
                 isSynced = json.optBoolean("isSynced", false),
                 sourceName = json.optCleanString("sourceName").ifBlank { "Кэш" },
-                geniusUrl = json.optCleanString("geniusUrl")
+                geniusUrl = json.optCleanString("geniusUrl"),
+                lrcDurationMs = json.optLong("lrcDurationMs", 0L)
             )
         } catch (e: Exception) {
             null

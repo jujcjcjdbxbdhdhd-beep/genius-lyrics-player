@@ -35,6 +35,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
@@ -54,6 +56,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_OPEN_GENIUS_WEB = "extra_open_genius_web"
+        private const val SYNC_LEAD_MS = 160L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -77,11 +80,13 @@ class MainActivity : AppCompatActivity() {
     private var currentLyricsResult: LyricsResult? = null
     private var lyricsLines: List<LyricLine> = emptyList()
     private var displayedLines: List<LyricLine> = emptyList()
+    private var lastAdaptedDurationMs: Long = 0L
 
     private var isMediaPlaying = false
     private var lastKnownPositionMs = 0L
     private var totalDurationMs = 0L
     private var lastUpdateTimeSystem = 0L
+    private var playbackSpeed = 1.0f
     private var manualSyncOffsetMs = 0L
     private var virtualPositionMs = 0L
     private var isManualSearchMode = false
@@ -105,8 +110,9 @@ class MainActivity : AppCompatActivity() {
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, 0L)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    val spd = intent.getFloatExtra(MediaNotificationListener.EXTRA_PLAYBACK_SPEED, 1.0f)
 
-                    updatePlaybackTime(pos, dur, updated, isPlaying)
+                    updatePlaybackTime(pos, dur, updated, isPlaying, spd)
                     binding.ambientAura.setPlaying(isPlaying)
                     onTrackUpdated(title, artist, rawTitle, artistFromTitle, isPlaying)
                 }
@@ -115,22 +121,28 @@ class MainActivity : AppCompatActivity() {
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, totalDurationMs)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    val spd = intent.getFloatExtra(MediaNotificationListener.EXTRA_PLAYBACK_SPEED, 1.0f)
                     val fromSeek = intent.getBooleanExtra(MediaNotificationListener.EXTRA_FROM_SEEK, false)
 
                     binding.ambientAura.setPlaying(isPlaying)
                     val now = SystemClock.elapsedRealtime()
                     if (fromSeek) {
                         seekIgnoreUntilSystemMs = now + 650L
-                        updatePlaybackTime(pos, dur, updated, isPlaying)
+                        updatePlaybackTime(pos, dur, updated, isPlaying, spd)
                         updatePlayStatusBadge(isPlaying)
                         updateProgressUI()
                         syncActiveLineToPosition(smoothScroll = true)
                     } else if (now < seekIgnoreUntilSystemMs && abs(pos - lastKnownPositionMs) > 2500L) {
                         isMediaPlaying = isPlaying
+                        playbackSpeed = if (spd in 0.25f..4.0f) spd else 1.0f
                         if (dur > 0L) totalDurationMs = dur
                         updatePlayStatusBadge(isPlaying)
                     } else {
-                        updatePlaybackTime(pos, dur, updated, isPlaying)
+                        val prevDur = totalDurationMs
+                        updatePlaybackTime(pos, dur, updated, isPlaying, spd)
+                        if (totalDurationMs > 10_000L && totalDurationMs != prevDur) {
+                            refreshAdaptedTimelineIfNeeded()
+                        }
                         updatePlayStatusBadge(isPlaying)
                         updateProgressUI()
                     }
@@ -141,6 +153,8 @@ class MainActivity : AppCompatActivity() {
                 AppMotionPrefs.ACTION_PREFS_CHANGED -> {
                     displayMode = AppMotionPrefs.getDisplayMode(this@MainActivity)
                     currentStyle = AppMotionPrefs.getIslandStyle(this@MainActivity)
+                    manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
+                    updateSyncOffsetLabel()
                     lyricsAdapter.displayMode = displayMode
                     lyricsAdapter.motionStyle = currentStyle
                     applyDisplayModeUI(animate = true)
@@ -154,11 +168,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applySystemBarInsets()
 
         displayMode = AppMotionPrefs.getDisplayMode(this)
         currentStyle = AppMotionPrefs.getIslandStyle(this)
+        manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
         setupRecyclerView()
         setupUI()
+        updateSyncOffsetLabel()
         applyDisplayModeUI(animate = false)
         updateMainStyleChipsUI()
         checkPermissions()
@@ -167,6 +184,38 @@ class MainActivity : AppCompatActivity() {
         if (intent?.getBooleanExtra(EXTRA_OPEN_GENIUS_WEB, false) == true) {
             intent.removeExtra(EXTRA_OPEN_GENIUS_WEB)
             openGeniusWeb()
+        }
+    }
+
+    private fun applySystemBarInsets() {
+        val density = resources.displayMetrics.density
+        val baseSide = (14f * density).toInt()
+        val baseTop = (12f * density).toInt()
+        val baseBottom = (12f * density).toInt()
+        val baseRvBottom = (180f * density).toInt()
+        val baseRvTop = (12f * density).toInt()
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, windowInsets ->
+            val sysBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+            binding.layoutMainContent.setPadding(
+                baseSide + sysBars.left,
+                baseTop + sysBars.top,
+                baseSide + sysBars.right,
+                baseBottom + sysBars.bottom
+            )
+            binding.rvLyrics.setPadding(
+                0,
+                baseRvTop,
+                0,
+                baseRvBottom + sysBars.bottom
+            )
+            binding.layoutGeniusWebView.setPadding(
+                sysBars.left,
+                sysBars.top,
+                sysBars.right,
+                sysBars.bottom
+            )
+            windowInsets
         }
     }
 
@@ -195,8 +244,8 @@ class MainActivity : AppCompatActivity() {
                 if (totalDurationMs <= 0L && effectiveDur > 0L) {
                     totalDurationMs = effectiveDur
                 }
-                if (!isManualSearchMode && effectiveDur > 10_000L && currentLyricsResult?.isSynced != true && displayedLines.firstOrNull()?.timeMs == -1L) {
-                    displayedLines = GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, effectiveDur)
+                if (!isManualSearchMode && effectiveDur > 10_000L) {
+                    refreshAdaptedTimelineIfNeeded()
                 }
 
                 val tappedTime = GeniusLyricsFetcher.resolveLineTimestampMs(displayedLines, clickedPosition, effectiveDur)
@@ -239,11 +288,14 @@ class MainActivity : AppCompatActivity() {
                 val tappedTime = GeniusLyricsFetcher.resolveLineTimestampMs(displayedLines, clickedPosition, effectiveDur)
                 if (!isManualSearchMode && tappedTime >= 0L) {
                     manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
+                    AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
+                    updateSyncOffsetLabel()
                     binding.rvLyrics.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     if (displayMode != LyricsDisplayMode.PLAIN_TEXT) {
                         selectLine(clickedPosition, smoothScroll = true, force = true)
                     }
-                    Toast.makeText(this, "Синхронизация привязана к этой строке", Toast.LENGTH_SHORT).show()
+                    val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
+                    Toast.makeText(this, "Синхронизация привязана к строке ($secStr)", Toast.LENGTH_SHORT).show()
                 }
             }
         )
@@ -294,6 +346,8 @@ class MainActivity : AppCompatActivity() {
         updateIslandButtonState()
         displayMode = AppMotionPrefs.getDisplayMode(this)
         currentStyle = AppMotionPrefs.getIslandStyle(this)
+        manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
+        updateSyncOffsetLabel()
         lyricsAdapter.displayMode = displayMode
         lyricsAdapter.motionStyle = currentStyle
         applyDisplayModeUI(animate = false)
@@ -329,7 +383,8 @@ class MainActivity : AppCompatActivity() {
                 MediaNotificationListener.currentPositionMs,
                 MediaNotificationListener.currentDurationMs,
                 MediaNotificationListener.lastPositionUpdateTime,
-                MediaNotificationListener.isPlaying
+                MediaNotificationListener.isPlaying,
+                MediaNotificationListener.currentPlaybackSpeed
             )
             onTrackUpdated(
                 currentTitle,
@@ -371,17 +426,56 @@ class MainActivity : AppCompatActivity() {
             toggleAutoScroll()
         }
 
+        binding.btnSyncBackMain.setOnClickListener {
+            manualSyncOffsetMs -= 500L
+            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
+            updateSyncOffsetLabel()
+            syncActiveLineToPosition(smoothScroll = true)
+            val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
+            Toast.makeText(this, "Сдвиг текста: $secStr (позже)", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnSyncFwdMain.setOnClickListener {
+            manualSyncOffsetMs += 500L
+            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
+            updateSyncOffsetLabel()
+            syncActiveLineToPosition(smoothScroll = true)
+            val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
+            Toast.makeText(this, "Сдвиг текста: $secStr (раньше)", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.tvSyncOffsetMain.setOnClickListener {
+            manualSyncOffsetMs = 0L
+            scrollSpeedFactor = 1.0f
+            AppMotionPrefs.setSyncOffsetMs(this, 0L)
+            updateSyncOffsetLabel()
+            updateSpeedLabel()
+            syncActiveLineToPosition(smoothScroll = true)
+            Toast.makeText(this, "Синхронизация сброшена (0.0с • 1.0x)", Toast.LENGTH_SHORT).show()
+        }
+
         binding.btnSpeedDown.setOnClickListener {
+            val step = if (scrollSpeedFactor in 0.75f..1.35f) 0.05f else 0.15f
             if (scrollSpeedFactor > 0.5f) {
-                scrollSpeedFactor = (scrollSpeedFactor - 0.25f).coerceAtLeast(0.5f)
+                scrollSpeedFactor = ((scrollSpeedFactor - step) * 20f).toInt() / 20f
+                scrollSpeedFactor = scrollSpeedFactor.coerceAtLeast(0.5f)
                 updateSpeedLabel()
+                syncActiveLineToPosition(smoothScroll = true)
             }
         }
         binding.btnSpeedUp.setOnClickListener {
+            val step = if (scrollSpeedFactor in 0.70f..1.30f) 0.05f else 0.15f
             if (scrollSpeedFactor < 3.0f) {
-                scrollSpeedFactor = (scrollSpeedFactor + 0.25f).coerceAtMost(3.0f)
+                scrollSpeedFactor = ((scrollSpeedFactor + step) * 20f).toInt() / 20f
+                scrollSpeedFactor = scrollSpeedFactor.coerceAtMost(3.0f)
                 updateSpeedLabel()
+                syncActiveLineToPosition(smoothScroll = true)
             }
+        }
+        binding.tvSpeed.setOnClickListener {
+            scrollSpeedFactor = 1.0f
+            updateSpeedLabel()
+            syncActiveLineToPosition(smoothScroll = true)
         }
 
         binding.btnFontDown.setOnClickListener {
@@ -402,6 +496,10 @@ class MainActivity : AppCompatActivity() {
             showSyncPill(false)
             reSyncJob?.cancel()
             manualSyncOffsetMs = 0L
+            scrollSpeedFactor = 1.0f
+            AppMotionPrefs.setSyncOffsetMs(this, 0L)
+            updateSyncOffsetLabel()
+            updateSpeedLabel()
             virtualPositionMs = 0L
             selectLine(0, smoothScroll = true, force = true)
         }
@@ -420,6 +518,10 @@ class MainActivity : AppCompatActivity() {
             if (activeTitle.isNotBlank()) {
                 Toast.makeText(this, "Обновляем текст...", Toast.LENGTH_SHORT).show()
                 manualSyncOffsetMs = 0L
+                scrollSpeedFactor = 1.0f
+                AppMotionPrefs.setSyncOffsetMs(this, 0L)
+                updateSyncOffsetLabel()
+                updateSpeedLabel()
                 virtualPositionMs = 0L
                 loadLyrics(
                     artist = activeArtist,
@@ -479,8 +581,12 @@ class MainActivity : AppCompatActivity() {
             binding.mainStyleSlide,
             binding.mainStylePop,
             binding.mainStyleTypewriter,
+            binding.btnSyncBackMain,
+            binding.tvSyncOffsetMain,
+            binding.btnSyncFwdMain,
             binding.btnToggleScroll,
             binding.btnSpeedDown,
+            binding.tvSpeed,
             binding.btnSpeedUp,
             binding.btnFontDown,
             binding.btnFontUp,
@@ -740,22 +846,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updatePlaybackTime(positionMs: Long, durationMs: Long, updatedAt: Long, playing: Boolean) {
+    private fun updatePlaybackTime(
+        positionMs: Long,
+        durationMs: Long,
+        updatedAt: Long,
+        playing: Boolean,
+        speed: Float = 1.0f
+    ) {
+        val now = SystemClock.elapsedRealtime()
         lastKnownPositionMs = positionMs.coerceAtLeast(0L)
         if (durationMs > 0L) {
             totalDurationMs = durationMs
         }
-        lastUpdateTimeSystem = if (updatedAt > 0L) updatedAt else SystemClock.elapsedRealtime()
+        lastUpdateTimeSystem = if (updatedAt in 1L..now && (now - updatedAt) <= 30_000L) {
+            updatedAt
+        } else {
+            now
+        }
         isMediaPlaying = playing
+        playbackSpeed = if (speed in 0.25f..4.0f) speed else 1.0f
     }
 
     private fun getCurrentTrackPosition(): Long {
         if (!isMediaPlaying || lastUpdateTimeSystem == 0L) {
             return lastKnownPositionMs.coerceAtLeast(0L)
         }
-        val elapsed = (SystemClock.elapsedRealtime() - lastUpdateTimeSystem).coerceAtLeast(0L)
+        val now = SystemClock.elapsedRealtime()
+        val elapsed = ((now - lastUpdateTimeSystem).coerceAtLeast(0L) * playbackSpeed).toLong()
         val raw = lastKnownPositionMs + elapsed
         return if (totalDurationMs > 0L) raw.coerceAtMost(totalDurationMs) else raw
+    }
+
+    private fun refreshAdaptedTimelineIfNeeded() {
+        val res = currentLyricsResult ?: return
+        if (isManualSearchMode || totalDurationMs <= 10_000L) return
+        if (lastAdaptedDurationMs == totalDurationMs && (displayedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
+            return
+        }
+        displayedLines = GeniusLyricsFetcher.adaptLyricsToTrackDuration(res, totalDurationMs, activeRawTitle)
+        lastAdaptedDurationMs = totalDurationMs
     }
 
     private fun updateProgressUI() {
@@ -785,20 +914,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun computeEffectivePlaybackMs(): Long {
+        val trackPos = (getCurrentTrackPosition().toDouble() * scrollSpeedFactor.toDouble()).toLong()
+        return (trackPos + manualSyncOffsetMs + SYNC_LEAD_MS).coerceAtLeast(0L)
+    }
+
     private fun startAutoScrollLoop() {
         scrollJob?.cancel()
         if (displayMode == LyricsDisplayMode.PLAIN_TEXT) return
         scrollJob = lifecycleScope.launch {
             while (isActive && isAutoScrolling && displayMode != LyricsDisplayMode.PLAIN_TEXT) {
-                val tickDelayMs = if (displayMode == LyricsDisplayMode.WORD_BY_WORD) 50L else 100L
+                val tickDelayMs = if (displayMode == LyricsDisplayMode.WORD_BY_WORD) 45L else 85L
                 if (lyricsLines.isNotEmpty()) {
                     updateProgressUI()
-
-                    // Upgrade to weighted timestamps smoothly once duration becomes known
-                    val isSynced = currentLyricsResult?.isSynced == true
-                    if (!isSynced && !isManualSearchMode && totalDurationMs > 10_000L && displayedLines.firstOrNull()?.timeMs == -1L) {
-                        displayedLines = GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs)
-                    }
+                    refreshAdaptedTimelineIfNeeded()
 
                     val canAdvance = isMediaPlaying || isManualSearchMode
                     if (canAdvance) {
@@ -812,10 +941,16 @@ class MainActivity : AppCompatActivity() {
                             } else {
                                 GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs).also {
                                     displayedLines = it
+                                    lastAdaptedDurationMs = totalDurationMs
                                 }
                             }
-                            effectiveMs = (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
+                            effectiveMs = computeEffectivePlaybackMs()
                             effectiveDur = totalDurationMs
+                        } else if (!isManualSearchMode && currentLyricsResult?.isSynced == true && (displayedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
+                            timelineLines = displayedLines
+                            effectiveMs = computeEffectivePlaybackMs()
+                            effectiveDur = currentLyricsResult?.lrcDurationMs?.takeIf { it > 0L }
+                                ?: ((timelineLines.lastOrNull()?.timeMs ?: 30_000L) + 5_000L)
                         } else {
                             val virtualDur = (lyricsLines.size * 2800L).coerceAtLeast(30_000L)
                             timelineLines = if ((displayedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
@@ -830,7 +965,7 @@ class MainActivity : AppCompatActivity() {
                             if (virtualPositionMs > lastTs + 3000L) {
                                 virtualPositionMs = 0L
                             }
-                            effectiveMs = virtualPositionMs
+                            effectiveMs = (virtualPositionMs + manualSyncOffsetMs).coerceAtLeast(0L)
                             effectiveDur = virtualDur
                         }
 
@@ -873,7 +1008,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncActiveLineToPosition(smoothScroll: Boolean) {
         if (displayMode == LyricsDisplayMode.PLAIN_TEXT || isManualSearchMode || displayedLines.isEmpty()) return
-        val effectiveMs = (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
+        refreshAdaptedTimelineIfNeeded()
+        val effectiveMs = computeEffectivePlaybackMs()
         val bestIndex = findBestLineIndex(displayedLines, effectiveMs)
         if (bestIndex != -1) {
             if (displayMode == LyricsDisplayMode.WORD_BY_WORD) {
@@ -916,6 +1052,18 @@ class MainActivity : AppCompatActivity() {
         binding.tvSpeed.text = String.format("%.2fx", scrollSpeedFactor)
     }
 
+    private fun updateSyncOffsetLabel() {
+        val sec = manualSyncOffsetMs / 1000.0
+        binding.tvSyncOffsetMain.text = if (manualSyncOffsetMs == 0L) {
+            "0.0с"
+        } else {
+            String.format("%+.1fс", sec)
+        }
+        binding.tvSyncOffsetMain.setTextColor(
+            if (manualSyncOffsetMs == 0L) Color.parseColor("#9DA7B5") else Color.parseColor("#39FF88")
+        )
+    }
+
     private fun updatePlayStatusBadge(isPlaying: Boolean) {
         if (isPlaying) {
             binding.tvStatusBadge.text = "● ИГРАЕТ"
@@ -946,8 +1094,13 @@ class MainActivity : AppCompatActivity() {
 
         isManualSearchMode = false
         manualSyncOffsetMs = 0L
+        scrollSpeedFactor = 1.0f
+        AppMotionPrefs.resetSyncOffset()
+        updateSyncOffsetLabel()
+        updateSpeedLabel()
         virtualPositionMs = 0L
         seekIgnoreUntilSystemMs = 0L
+        lastAdaptedDurationMs = 0L
 
         activeTitle = cleanTitle
         activeArtist = cleanArtist
@@ -983,10 +1136,15 @@ class MainActivity : AppCompatActivity() {
 
         isManualSearchMode = true
         manualSyncOffsetMs = 0L
+        scrollSpeedFactor = 1.0f
+        AppMotionPrefs.resetSyncOffset()
+        updateSyncOffsetLabel()
+        updateSpeedLabel()
         virtualPositionMs = 0L
         seekIgnoreUntilSystemMs = 0L
         totalDurationMs = 0L
         lastKnownPositionMs = 0L
+        lastAdaptedDurationMs = 0L
 
         activeTitle = targetTitle
         activeArtist = targetArtist
@@ -1015,6 +1173,7 @@ class MainActivity : AppCompatActivity() {
         displayedLines = emptyList()
         lyricsLines = emptyList()
         currentLyricsResult = null
+        lastAdaptedDurationMs = 0L
 
         binding.progressBar.visibility = View.VISIBLE
         binding.tvLyricsPlaceholder.visibility = View.VISIBLE
@@ -1025,13 +1184,21 @@ class MainActivity : AppCompatActivity() {
         isUserManuallyScrolling = false
 
         lyricsLoadJob = lifecycleScope.launch {
+            val knownDur = if (!isManualSearchMode && totalDurationMs > 0L) {
+                totalDurationMs
+            } else if (!isManualSearchMode) {
+                MediaNotificationListener.currentDurationMs
+            } else {
+                0L
+            }
             val result = GeniusLyricsFetcher.getLyrics(
                 context = applicationContext,
                 artist = artist,
                 title = title,
                 rawTitle = rawTitle,
                 artistFromTitle = artistFromTitle,
-                forceRefresh = forceRefresh
+                forceRefresh = forceRefresh,
+                trackDurationMs = knownDur
             )
             if (!isActive) return@launch
             binding.progressBar.visibility = View.GONE
@@ -1043,15 +1210,26 @@ class MainActivity : AppCompatActivity() {
                 binding.btnPlaceholderGeniusWeb.visibility = View.GONE
                 binding.rvLyrics.visibility = View.VISIBLE
 
+                val effectiveDur = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
+                if (!isManualSearchMode && totalDurationMs <= 0L && effectiveDur > 0L) {
+                    totalDurationMs = effectiveDur
+                }
+
                 lyricsLines = lyricsResult.lines
-                displayedLines = if (!lyricsResult.isSynced && !isManualSearchMode && totalDurationMs > 10_000L) {
-                    GeniusLyricsFetcher.estimateLineTimestamps(lyricsLines, totalDurationMs)
+                displayedLines = if (!isManualSearchMode && totalDurationMs > 10_000L) {
+                    lastAdaptedDurationMs = totalDurationMs
+                    GeniusLyricsFetcher.adaptLyricsToTrackDuration(lyricsResult, totalDurationMs, rawTitle)
                 } else {
                     lyricsLines
                 }
                 lyricsAdapter.submitLines(displayedLines)
                 if (displayMode != LyricsDisplayMode.PLAIN_TEXT) {
-                    selectLine(0, smoothScroll = false, force = true)
+                    val startIdx = if (!isManualSearchMode && getCurrentTrackPosition() > 1500L) {
+                        findBestLineIndex(displayedLines, computeEffectivePlaybackMs()).coerceAtLeast(0)
+                    } else {
+                        0
+                    }
+                    selectLine(startIdx, smoothScroll = false, force = true)
                 }
                 animateLyricsListEntrance()
 

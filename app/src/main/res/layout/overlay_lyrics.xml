@@ -75,21 +75,23 @@
     <LinearLayout
         android:id="@+id/layoutIslandCompact"
         android:layout_width="match_parent"
-        android:layout_height="50dp"
+        android:layout_height="wrap_content"
         android:background="@drawable/island_pill_bg"
         android:clipChildren="true"
         android:clipToPadding="true"
         android:elevation="16dp"
+        android:minHeight="52dp"
         android:orientation="vertical"
         android:visibility="visible">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="wrap_content"
             android:gravity="center_vertical"
+            android:minHeight="44dp"
             android:orientation="horizontal"
-            android:paddingHorizontal="14dp">
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="2dp">
 
             <LinearLayout
                 android:layout_width="wrap_content"
@@ -128,23 +130,27 @@
             <FrameLayout
                 android:id="@+id/compactLyricStage"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_marginHorizontal="10dp"
                 android:layout_weight="1"
                 android:clipChildren="true"
-                android:clipToPadding="true">
+                android:clipToPadding="true"
+                android:minHeight="38dp">
 
                 <TextView
                     android:id="@+id/tvCompactLyricA"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
                     android:ellipsize="marquee"
                     android:focusable="true"
                     android:focusableInTouchMode="true"
                     android:fontFamily="sans-serif-medium"
                     android:gravity="center_vertical"
+                    android:includeFontPadding="true"
                     android:marqueeRepeatLimit="marquee_forever"
                     android:maxLines="1"
+                    android:paddingVertical="2dp"
                     android:scrollHorizontally="true"
                     android:singleLine="true"
                     android:text="Включите трек…"
@@ -156,14 +162,17 @@
                 <TextView
                     android:id="@+id/tvCompactLyricB"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
                     android:ellipsize="marquee"
                     android:focusable="true"
                     android:focusableInTouchMode="true"
                     android:fontFamily="sans-serif-medium"
                     android:gravity="center_vertical"
+                    android:includeFontPadding="true"
                     android:marqueeRepeatLimit="marquee_forever"
                     android:maxLines="1"
+                    android:paddingVertical="2dp"
                     android:scrollHorizontally="true"
                     android:singleLine="true"
                     android:text=""
@@ -451,7 +460,8 @@
                 android:layout_height="wrap_content"
                 android:clipChildren="true"
                 android:clipToPadding="true"
-                android:minHeight="44dp">
+                android:minHeight="46dp"
+                android:paddingVertical="2dp">
 
                 <TextView
                     android:id="@+id/tvOverlayCurrentA"
@@ -459,8 +469,10 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:fontFamily="sans-serif-black"
+                    android:includeFontPadding="true"
                     android:lineSpacingExtra="2dp"
                     android:maxLines="2"
+                    android:paddingBottom="2dp"
                     android:text="Ожидание трека..."
                     android:textColor="#FFFFFF"
                     android:textSize="16.5sp"
@@ -472,8 +484,10 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:fontFamily="sans-serif-black"
+                    android:includeFontPadding="true"
                     android:lineSpacingExtra="2dp"
                     android:maxLines="2"
+                    android:paddingBottom="2dp"
                     android:text=""
                     android:textColor="#FFFFFF"
                     android:textSize="16.5sp"
@@ -489,7 +503,9 @@
                 android:clickable="true"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
+                android:includeFontPadding="true"
                 android:maxLines="2"
+                android:paddingBottom="2dp"
                 android:text=""
                 android:textColor="#9EA3A8"
                 android:textSize="13sp" />
@@ -508,6 +524,7 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
+            android:clipToPadding="false"
             android:fillViewport="true">
 
             <LinearLayout
@@ -530,7 +547,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:paddingBottom="16dp" />
+                    android:paddingBottom="24dp" />
             </LinearLayout>
         </androidx.core.widget.NestedScrollView>
 

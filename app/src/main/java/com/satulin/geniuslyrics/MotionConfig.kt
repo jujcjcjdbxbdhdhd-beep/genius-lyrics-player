@@ -218,6 +218,19 @@ object AppMotionPrefs {
     const val KEY_DISPLAY_MODE = "lyrics_display_mode"
     const val ACTION_PREFS_CHANGED = "com.satulin.geniuslyrics.ACTION_PREFS_CHANGED"
 
+    @Volatile
+    var currentSyncOffsetMs: Long = 0L
+        private set
+
+    fun setSyncOffsetMs(context: Context, offsetMs: Long) {
+        currentSyncOffsetMs = offsetMs
+        notifyPrefsChanged(context)
+    }
+
+    fun resetSyncOffset() {
+        currentSyncOffsetMs = 0L
+    }
+
     fun getIslandStyle(context: Context): IslandAnimStyle {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_ISLAND_STYLE, IslandAnimStyle.FLY_IN.id)

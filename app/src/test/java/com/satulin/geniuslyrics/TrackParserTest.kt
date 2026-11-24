@@ -261,6 +261,35 @@ class TrackParserTest {
     }
 
     @Test
+    fun testAdaptSyncedLyricsScalesForSlowedTrack() {
+        val lines = listOf(
+            LyricLine(10_000L, "Первая строка"),
+            LyricLine(60_000L, "Вторая строка"),
+            LyricLine(140_000L, "Третья строка")
+        )
+        val res = LyricsResult(
+            title = "Song", artist = "Artist", lines = lines, plainLyrics = "",
+            isSynced = true, lrcDurationMs = 150_000L
+        )
+        // Slowed + reverb version is 25% longer -> timestamps must stretch
+        val slowed = GeniusLyricsFetcher.adaptLyricsToTrackDuration(res, 187_500L, "Song (slowed + reverb)")
+        assertEquals(12_500L, slowed[0].timeMs)
+        assertEquals(175_000L, slowed[2].timeMs)
+
+        // Same-length track -> timestamps untouched
+        val normal = GeniusLyricsFetcher.adaptLyricsToTrackDuration(res, 151_000L, "Song")
+        assertEquals(lines.map { it.timeMs }, normal.map { it.timeMs })
+    }
+
+    @Test
+    fun testParseLrcLinesHandlesOffsetAndMultiTags() {
+        val lrc = "[offset:+500]\n[00:10.00][00:30.50]Припев\n[00:20.5]Куплет"
+        val parsed = GeniusLyricsFetcher.parseLrcLines(lrc)
+        assertEquals(listOf(9_500L, 20_000L, 30_000L), parsed.map { it.timeMs })
+        assertEquals("Куплет", parsed[1].text)
+    }
+
+    @Test
     fun testComputeSeekTargetAndResolveTimestamp() {
         // 1. computeSeekTargetMs: normal case, positive offset, lower clamp, upper clamp, unknown duration
         assertEquals(45_000L, GeniusLyricsFetcher.computeSeekTargetMs(45_000L, 0L, 180_000L))

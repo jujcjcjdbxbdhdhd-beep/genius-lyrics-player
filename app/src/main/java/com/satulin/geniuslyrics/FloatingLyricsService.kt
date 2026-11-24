@@ -57,6 +57,8 @@ class FloatingLyricsService : Service() {
     }
 
     companion object {
+        private const val SYNC_LEAD_MS = 160L
+
         @Volatile
         var isRunning: Boolean = false
 
@@ -122,6 +124,10 @@ class FloatingLyricsService : Service() {
     private var totalDurationMs: Long = 0L
     private var lastUpdateTimeSystem: Long = 0L
     private var manualSyncOffsetMs: Long = 0L
+    private var playbackSpeed: Float = 1.0f
+    private var lastAdaptedDurationMs: Long = 0L
+    private var currentLyricsResult: LyricsResult? = null
+    private var currentRawTitleForAdapt: String = ""
     private var virtualPositionMs: Long = 0L
     private var seekIgnoreUntilSystemMs: Long = 0L
 
@@ -137,6 +143,8 @@ class FloatingLyricsService : Service() {
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, 0L)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    val spd = intent.getFloatExtra(MediaNotificationListener.EXTRA_PLAYBACK_SPEED, 1.0f)
+                    playbackSpeed = if (spd in 0.25f..4.0f) spd else 1.0f
 
                     updatePlaybackTime(pos, dur, updated, isPlaying)
                     updateTrack(title, artist, rawTitle, artistFromTitle)
@@ -146,6 +154,8 @@ class FloatingLyricsService : Service() {
                     val pos = intent.getLongExtra(MediaNotificationListener.EXTRA_POSITION_MS, 0L)
                     val dur = intent.getLongExtra(MediaNotificationListener.EXTRA_DURATION_MS, totalDurationMs)
                     val updated = intent.getLongExtra(MediaNotificationListener.EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    val spd = intent.getFloatExtra(MediaNotificationListener.EXTRA_PLAYBACK_SPEED, 1.0f)
+                    playbackSpeed = if (spd in 0.25f..4.0f) spd else 1.0f
                     val fromSeek = intent.getBooleanExtra(MediaNotificationListener.EXTRA_FROM_SEEK, false)
 
                     val playChanged = (isPlaying != isMediaPlaying)
@@ -173,8 +183,14 @@ class FloatingLyricsService : Service() {
                 AppMotionPrefs.ACTION_PREFS_CHANGED -> {
                     currentStyle = AppMotionPrefs.getIslandStyle(this@FloatingLyricsService)
                     displayMode = AppMotionPrefs.getDisplayMode(this@FloatingLyricsService)
+                    val sharedOffset = AppMotionPrefs.currentSyncOffsetMs
+                    val offsetChanged = sharedOffset != manualSyncOffsetMs
+                    manualSyncOffsetMs = sharedOffset
                     updateStyleChipsUI()
                     applyDisplayModeUI()
+                    if (offsetChanged) {
+                        recalculateActiveLineNow(advanceVirtual = false)
+                    }
                 }
             }
         }
@@ -384,6 +400,7 @@ class FloatingLyricsService : Service() {
 
         btnSyncBack?.setOnClickListener {
             manualSyncOffsetMs -= 500L
+            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
             recalculateActiveLineNow()
             val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
             Toast.makeText(this, "Синхронизация: $secStr", Toast.LENGTH_SHORT).show()
@@ -391,6 +408,7 @@ class FloatingLyricsService : Service() {
 
         btnSyncFwd?.setOnClickListener {
             manualSyncOffsetMs += 500L
+            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
             recalculateActiveLineNow()
             val secStr = String.format("%+.1fс", manualSyncOffsetMs / 1000.0)
             Toast.makeText(this, "Синхронизация: $secStr", Toast.LENGTH_SHORT).show()
@@ -856,15 +874,24 @@ class FloatingLyricsService : Service() {
         if (durationMs > 0L) {
             totalDurationMs = durationMs
         }
-        lastUpdateTimeSystem = if (updatedAt > 0L) updatedAt else SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        lastUpdateTimeSystem = if (updatedAt in 1L..now && (now - updatedAt) <= 30_000L) updatedAt else now
         isMediaPlaying = playing
+    }
+
+    private fun refreshAdaptedTimelineIfNeeded() {
+        val res = currentLyricsResult ?: return
+        if (totalDurationMs <= 10_000L || currentLines.isEmpty()) return
+        if (lastAdaptedDurationMs == totalDurationMs && (syncedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) return
+        syncedLines = GeniusLyricsFetcher.adaptLyricsToTrackDuration(res, totalDurationMs, currentRawTitleForAdapt)
+        lastAdaptedDurationMs = totalDurationMs
     }
 
     private fun getCurrentTrackPosition(): Long {
         if (!isMediaPlaying || lastUpdateTimeSystem == 0L) {
             return lastKnownPositionMs.coerceAtLeast(0L)
         }
-        val elapsed = (SystemClock.elapsedRealtime() - lastUpdateTimeSystem).coerceAtLeast(0L)
+        val elapsed = ((SystemClock.elapsedRealtime() - lastUpdateTimeSystem).coerceAtLeast(0L) * playbackSpeed).toLong()
         val raw = lastKnownPositionMs + elapsed
         return if (totalDurationMs > 0L) raw.coerceAtMost(totalDurationMs) else raw
     }
@@ -904,6 +931,10 @@ class FloatingLyricsService : Service() {
         activeIndex = -1
         virtualPositionMs = 0L
         manualSyncOffsetMs = 0L
+        AppMotionPrefs.resetSyncOffset()
+        currentLyricsResult = null
+        lastAdaptedDurationMs = 0L
+        currentRawTitleForAdapt = rawTitle.ifBlank { cleanTitle }
         seekIgnoreUntilSystemMs = 0L
         overlayLineViews.clear()
 
@@ -939,7 +970,8 @@ class FloatingLyricsService : Service() {
                 artist = cleanArtist,
                 title = cleanTitle,
                 rawTitle = rawTitle.ifBlank { cleanTitle },
-                artistFromTitle = artistFromTitle
+                artistFromTitle = artistFromTitle,
+                trackDurationMs = if (totalDurationMs > 0L) totalDurationMs else MediaNotificationListener.currentDurationMs
             )
             if (!isActive) return@launch
             result.onSuccess { lyricsResult ->
@@ -947,8 +979,13 @@ class FloatingLyricsService : Service() {
                 currentLines = lyricsResult.lines
                 isSyncedSource = lyricsResult.isSynced
                 currentSourceName = lyricsResult.sourceName
-                syncedLines = if (!isSyncedSource && totalDurationMs > 10_000L) {
-                    GeniusLyricsFetcher.estimateLineTimestamps(currentLines, totalDurationMs)
+                currentLyricsResult = lyricsResult
+                if (totalDurationMs <= 0L && MediaNotificationListener.currentDurationMs > 0L) {
+                    totalDurationMs = MediaNotificationListener.currentDurationMs
+                }
+                syncedLines = if (totalDurationMs > 10_000L) {
+                    lastAdaptedDurationMs = totalDurationMs
+                    GeniusLyricsFetcher.adaptLyricsToTrackDuration(lyricsResult, totalDurationMs, currentRawTitleForAdapt)
                 } else {
                     currentLines
                 }
@@ -1054,9 +1091,7 @@ class FloatingLyricsService : Service() {
     private fun recalculateActiveLineNow(advanceVirtual: Boolean = false, tickStepMs: Long = 150L) {
         if (displayMode == LyricsDisplayMode.PLAIN_TEXT || currentLines.isEmpty()) return
 
-        if (!isSyncedSource && totalDurationMs > 10_000L && syncedLines.firstOrNull()?.timeMs == -1L) {
-            syncedLines = GeniusLyricsFetcher.estimateLineTimestamps(currentLines, totalDurationMs)
-        }
+        refreshAdaptedTimelineIfNeeded()
 
         val virtualDur = (currentLines.size * 2800L).coerceAtLeast(30_000L)
         val timeline = if ((syncedLines.firstOrNull()?.timeMs ?: -1L) >= 0L) {
@@ -1069,7 +1104,7 @@ class FloatingLyricsService : Service() {
 
         val effectiveDur = if (totalDurationMs > 10_000L) totalDurationMs else virtualDur
         val effectiveMs = if (totalDurationMs > 10_000L) {
-            (getCurrentTrackPosition() + manualSyncOffsetMs).coerceAtLeast(0L)
+            (getCurrentTrackPosition() + manualSyncOffsetMs + SYNC_LEAD_MS).coerceAtLeast(0L)
         } else {
             if (advanceVirtual) {
                 virtualPositionMs += tickStepMs
@@ -1448,7 +1483,8 @@ class FloatingLyricsService : Service() {
         if (totalDurationMs <= 0L && effectiveDur > 0L) {
             totalDurationMs = effectiveDur
         }
-        if (!isSyncedSource && effectiveDur > 10_000L && syncedLines.firstOrNull()?.timeMs == -1L) {
+        refreshAdaptedTimelineIfNeeded()
+        if (effectiveDur > 10_000L && syncedLines.firstOrNull()?.timeMs == -1L) {
             syncedLines = GeniusLyricsFetcher.estimateLineTimestamps(currentLines, effectiveDur)
         }
         val timeline = if (syncedLines.size == currentLines.size) syncedLines else currentLines
@@ -1500,6 +1536,7 @@ class FloatingLyricsService : Service() {
         val tappedTime = resolveOverlayTimestampMs(idx)
         if (tappedTime >= 0L && totalDurationMs > 0L) {
             manualSyncOffsetMs = tappedTime - getCurrentTrackPosition()
+            AppMotionPrefs.setSyncOffsetMs(this, manualSyncOffsetMs)
             overlayView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             if (displayMode != LyricsDisplayMode.PLAIN_TEXT) {
                 lastOverlayWordKey = -1L

@@ -10,6 +10,8 @@ import android.media.session.MediaSession
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
@@ -35,6 +37,7 @@ class MediaNotificationListener : NotificationListenerService() {
         const val EXTRA_DURATION_MS = "extra_duration_ms"
         const val EXTRA_UPDATED_AT = "extra_updated_at"
         const val EXTRA_FROM_SEEK = "extra_from_seek"
+        const val EXTRA_PLAYBACK_SPEED = "extra_playback_speed"
 
         var currentTitle: String? = null
         var currentArtist: String? = null
@@ -45,6 +48,7 @@ class MediaNotificationListener : NotificationListenerService() {
         var currentPositionMs: Long = 0L
         var currentDurationMs: Long = 0L
         var lastPositionUpdateTime: Long = 0L
+        var currentPlaybackSpeed: Float = 1.0f
 
         @Volatile
         private var activeInstance: MediaNotificationListener? = null
@@ -574,6 +578,16 @@ class MediaNotificationListener : NotificationListenerService() {
     private var mediaSessionManager: MediaSessionManager? = null
     private var seekGuardUntilMs: Long = 0L
     private var pendingSeekTargetMs: Long = -1L
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val syncPollRunnable = object : Runnable {
+        override fun run() {
+            pollActiveControllerSync()
+            if (activeMediaController != null) {
+                mainHandler.postDelayed(this, 1000L)
+            }
+        }
+    }
 
     private val mediaControllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) {
@@ -619,6 +633,7 @@ class MediaNotificationListener : NotificationListenerService() {
 
     private fun cleanupMediaListeners() {
         activeInstance = null
+        mainHandler.removeCallbacks(syncPollRunnable)
         try {
             activeMediaController?.unregisterCallback(mediaControllerCallback)
         } catch (_: Exception) {}
@@ -628,6 +643,96 @@ class MediaNotificationListener : NotificationListenerService() {
             mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
         } catch (_: Exception) {}
         mediaSessionManager = null
+    }
+
+    private fun startControllerPolling() {
+        mainHandler.removeCallbacks(syncPollRunnable)
+        mainHandler.postDelayed(syncPollRunnable, 1000L)
+    }
+
+    /**
+     * Periodically inspects the bound MediaController's live PlaybackState & MediaMetadata.
+     * Catches silent stream buffering, post-start duration population, or drift without waiting
+     * for an explicit notification update.
+     */
+    private fun pollActiveControllerSync() {
+        val controller = activeMediaController ?: return
+        try {
+            val meta = controller.metadata
+            var durChanged = false
+            if (meta != null) {
+                val dur = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                if (dur > 0L && dur != currentDurationMs) {
+                    currentDurationMs = dur
+                    durChanged = true
+                }
+                val metaTitle = sanitizeText(meta.getString(MediaMetadata.METADATA_KEY_TITLE))
+                if (metaTitle.isNotBlank() && metaTitle != currentRawTitle) {
+                    updateMetadata(meta, resetPositionOnTrackChange = false)
+                }
+            }
+
+            val state = controller.playbackState ?: return
+            val now = SystemClock.elapsedRealtime()
+            if (now < seekGuardUntilMs && pendingSeekTargetMs >= 0L) {
+                return
+            }
+
+            val (livePlaying, livePos, liveSpeed) = extractNormalizedPlayback(state, now)
+            val expectedOurPos = if (isPlaying && lastPositionUpdateTime > 0L) {
+                val elapsed = (now - lastPositionUpdateTime).coerceAtLeast(0L)
+                currentPositionMs + (elapsed * currentPlaybackSpeed).toLong()
+            } else {
+                currentPositionMs
+            }
+
+            val driftMs = abs(livePos - expectedOurPos)
+            if (livePlaying != isPlaying || durChanged || driftMs > 320L || abs(liveSpeed - currentPlaybackSpeed) > 0.02f) {
+                isPlaying = livePlaying
+                currentPositionMs = livePos
+                lastPositionUpdateTime = now
+                currentPlaybackSpeed = liveSpeed
+
+                val intent = Intent(ACTION_PLAYBACK_STATE).apply {
+                    putExtra(EXTRA_IS_PLAYING, livePlaying)
+                    putExtra(EXTRA_POSITION_MS, livePos)
+                    putExtra(EXTRA_DURATION_MS, currentDurationMs)
+                    putExtra(EXTRA_UPDATED_AT, now)
+                    putExtra(EXTRA_PLAYBACK_SPEED, liveSpeed)
+                    putExtra(EXTRA_FROM_SEEK, false)
+                    setPackage(applicationContext.packageName)
+                }
+                sendBroadcast(intent)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun extractNormalizedPlayback(state: PlaybackState, nowElapsedMs: Long): Triple<Boolean, Long, Float> {
+        val stateCode = state.state
+        val rawSpeed = state.playbackSpeed
+        val activelyPlaying = (stateCode == PlaybackState.STATE_PLAYING || stateCode == PlaybackState.STATE_FAST_FORWARDING) &&
+            (rawSpeed > 0.01f || rawSpeed == 0f)
+        val effectiveSpeed = if (activelyPlaying) {
+            if (rawSpeed in 0.25f..4.0f) rawSpeed else 1.0f
+        } else {
+            0.0f
+        }
+
+        val rawPos = state.position.coerceAtLeast(0L)
+        val rawUpdated = state.lastPositionUpdateTime
+
+        // Validate that lastPositionUpdateTime is in the SystemClock.elapsedRealtime() domain
+        val extrapolatedPos = if (activelyPlaying && rawUpdated in 1L..nowElapsedMs && (nowElapsedMs - rawUpdated) <= 30_000L) {
+            rawPos + ((nowElapsedMs - rawUpdated) * effectiveSpeed).toLong()
+        } else {
+            rawPos
+        }
+        val clampedPos = if (currentDurationMs > 0L) {
+            extrapolatedPos.coerceIn(0L, currentDurationMs)
+        } else {
+            extrapolatedPos.coerceAtLeast(0L)
+        }
+        return Triple(activelyPlaying, clampedPos, if (activelyPlaying) effectiveSpeed else 1.0f)
     }
 
     fun scanActiveMedia() {
@@ -686,8 +791,15 @@ class MediaNotificationListener : NotificationListenerService() {
             if (!pkg.isNullOrBlank()) {
                 currentPackage = pkg
             }
-            controller.playbackState?.let { updatePlaybackState(it) }
+            startControllerPolling()
             val meta = controller.metadata
+            if (meta != null) {
+                val dur = meta.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                if (dur > 0L) {
+                    currentDurationMs = dur
+                }
+            }
+            controller.playbackState?.let { updatePlaybackState(it) }
             if (meta != null) {
                 val metaTitle = sanitizeText(meta.getString(MediaMetadata.METADATA_KEY_TITLE))
                 if (metaTitle.isNotBlank()) {
@@ -763,8 +875,10 @@ class MediaNotificationListener : NotificationListenerService() {
             currentPositionMs = 0L
             currentDurationMs = 0L
             lastPositionUpdateTime = SystemClock.elapsedRealtime()
+            currentPlaybackSpeed = 1.0f
             pendingSeekTargetMs = -1L
             seekGuardUntilMs = 0L
+            AppMotionPrefs.resetSyncOffset()
         }
 
         currentTitle = parsed.title
@@ -786,6 +900,7 @@ class MediaNotificationListener : NotificationListenerService() {
             putExtra(EXTRA_POSITION_MS, currentPositionMs)
             putExtra(EXTRA_DURATION_MS, currentDurationMs)
             putExtra(EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+            putExtra(EXTRA_PLAYBACK_SPEED, currentPlaybackSpeed)
             setPackage(applicationContext.packageName)
         }
         sendBroadcast(intent)
@@ -799,18 +914,33 @@ class MediaNotificationListener : NotificationListenerService() {
         val artist = sanitizeText(metadata.getString(MediaMetadata.METADATA_KEY_ARTIST))
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
 
+        val prevDur = currentDurationMs
         if (duration > 0) {
             currentDurationMs = duration
         }
 
         if (title.isNotBlank()) {
             val parsed = parseTrack(title, artist)
-            if (parsed.title != currentTitle || parsed.artist != currentArtist) {
+            val trackChanged = parsed.title != currentTitle || parsed.artist != currentArtist
+            if (trackChanged) {
                 pendingSeekTargetMs = -1L
                 seekGuardUntilMs = 0L
-                if (resetPositionOnTrackChange) {
+                AppMotionPrefs.resetSyncOffset()
+                val liveState = activeMediaController?.playbackState
+                val now = SystemClock.elapsedRealtime()
+                if (liveState != null) {
+                    val (_, livePos, liveSpd) = extractNormalizedPlayback(liveState, now)
+                    currentPositionMs = if (resetPositionOnTrackChange && livePos > 5000L && duration > 0L && abs(livePos - duration) < 3000L) {
+                        0L
+                    } else {
+                        livePos
+                    }
+                    lastPositionUpdateTime = now
+                    currentPlaybackSpeed = liveSpd
+                } else if (resetPositionOnTrackChange) {
                     currentPositionMs = 0L
-                    lastPositionUpdateTime = SystemClock.elapsedRealtime()
+                    lastPositionUpdateTime = now
+                    currentPlaybackSpeed = 1.0f
                 }
                 if (duration <= 0) {
                     currentDurationMs = 0L
@@ -830,12 +960,25 @@ class MediaNotificationListener : NotificationListenerService() {
                     putExtra(EXTRA_POSITION_MS, currentPositionMs)
                     putExtra(EXTRA_DURATION_MS, currentDurationMs)
                     putExtra(EXTRA_UPDATED_AT, SystemClock.elapsedRealtime())
+                    putExtra(EXTRA_PLAYBACK_SPEED, currentPlaybackSpeed)
                     setPackage(applicationContext.packageName)
                 }
                 sendBroadcast(intent)
                 if (isPlaying) {
                     maybeAutoStartIsland()
                 }
+            } else if (duration > 0L && duration != prevDur) {
+                val now = SystemClock.elapsedRealtime()
+                val intent = Intent(ACTION_PLAYBACK_STATE).apply {
+                    putExtra(EXTRA_IS_PLAYING, isPlaying)
+                    putExtra(EXTRA_POSITION_MS, currentPositionMs)
+                    putExtra(EXTRA_DURATION_MS, currentDurationMs)
+                    putExtra(EXTRA_UPDATED_AT, lastPositionUpdateTime.takeIf { it > 0L } ?: now)
+                    putExtra(EXTRA_PLAYBACK_SPEED, currentPlaybackSpeed)
+                    putExtra(EXTRA_FROM_SEEK, false)
+                    setPackage(applicationContext.packageName)
+                }
+                sendBroadcast(intent)
             }
         }
     }
@@ -869,6 +1012,7 @@ class MediaNotificationListener : NotificationListenerService() {
                 putExtra(EXTRA_POSITION_MS, clamped)
                 putExtra(EXTRA_DURATION_MS, currentDurationMs)
                 putExtra(EXTRA_UPDATED_AT, now)
+                putExtra(EXTRA_PLAYBACK_SPEED, currentPlaybackSpeed)
                 putExtra(EXTRA_FROM_SEEK, true)
                 setPackage(applicationContext.packageName)
             }
@@ -881,15 +1025,14 @@ class MediaNotificationListener : NotificationListenerService() {
     }
 
     private fun updatePlaybackState(state: PlaybackState) {
-        val playing = state.state == PlaybackState.STATE_PLAYING
-        val position = state.position
-        val updatedAt = state.lastPositionUpdateTime
-
         val now = SystemClock.elapsedRealtime()
+        val (playing, position, speed) = extractNormalizedPlayback(state, now)
+
         if (now < seekGuardUntilMs && pendingSeekTargetMs >= 0L) {
             if (abs(position - pendingSeekTargetMs) > 2500L) {
                 // Ignore stale pre-seek position while player buffers seek, only track play/pause change
                 isPlaying = playing
+                currentPlaybackSpeed = speed
                 return
             } else {
                 pendingSeekTargetMs = -1L
@@ -897,15 +1040,28 @@ class MediaNotificationListener : NotificationListenerService() {
             }
         }
 
+        if (currentDurationMs <= 0L) {
+            val metaDur = try {
+                activeMediaController?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+            } catch (_: Exception) {
+                0L
+            }
+            if (metaDur > 0L) {
+                currentDurationMs = metaDur
+            }
+        }
+
         isPlaying = playing
         currentPositionMs = position
-        lastPositionUpdateTime = updatedAt
+        lastPositionUpdateTime = now
+        currentPlaybackSpeed = speed
 
         val intent = Intent(ACTION_PLAYBACK_STATE).apply {
             putExtra(EXTRA_IS_PLAYING, playing)
             putExtra(EXTRA_POSITION_MS, position)
             putExtra(EXTRA_DURATION_MS, currentDurationMs)
-            putExtra(EXTRA_UPDATED_AT, updatedAt)
+            putExtra(EXTRA_UPDATED_AT, now)
+            putExtra(EXTRA_PLAYBACK_SPEED, speed)
             putExtra(EXTRA_FROM_SEEK, false)
             setPackage(applicationContext.packageName)
         }

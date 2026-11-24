@@ -24,9 +24,10 @@
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:fontFamily="sans-serif-black"
-        android:includeFontPadding="false"
+        android:includeFontPadding="true"
         android:letterSpacing="-0.01"
         android:lineSpacingExtra="6dp"
+        android:paddingVertical="2dp"
         android:textColor="@color/lyric_inactive"
         android:textSize="20sp" />
 </LinearLayout>

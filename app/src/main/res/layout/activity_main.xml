@@ -17,6 +17,8 @@
         android:id="@+id/layoutMainContent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         android:paddingHorizontal="14dp"
         android:paddingTop="12dp"
         android:paddingBottom="10dp">
@@ -305,10 +307,11 @@
         <LinearLayout
             android:id="@+id/layoutModeTabs"
             android:layout_width="match_parent"
-            android:layout_height="38dp"
+            android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:background="@drawable/glass_pill_bg"
             android:gravity="center_vertical"
+            android:minHeight="38dp"
             android:orientation="horizontal"
             android:padding="3dp"
             app:layout_constraintTop_toBottomOf="@id/layoutSearch">
@@ -316,13 +319,15 @@
             <TextView
                 android:id="@+id/tabKaraoke"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:clickable="true"
                 android:ellipsize="end"
                 android:focusable="true"
                 android:gravity="center"
                 android:maxLines="1"
+                android:minHeight="32dp"
+                android:paddingVertical="5dp"
                 android:text="🎤 Караоке"
                 android:textColor="#000000"
                 android:textSize="11.5sp"
@@ -331,7 +336,7 @@
             <TextView
                 android:id="@+id/tabWordByWord"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_marginHorizontal="3dp"
                 android:layout_weight="1"
                 android:clickable="true"
@@ -339,6 +344,8 @@
                 android:focusable="true"
                 android:gravity="center"
                 android:maxLines="1"
+                android:minHeight="32dp"
+                android:paddingVertical="5dp"
                 android:text="✨ По словам"
                 android:textColor="#9DA7B5"
                 android:textSize="11.5sp"
@@ -347,13 +354,15 @@
             <TextView
                 android:id="@+id/tabPlainText"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:clickable="true"
                 android:ellipsize="end"
                 android:focusable="true"
                 android:gravity="center"
                 android:maxLines="1"
+                android:minHeight="32dp"
+                android:paddingVertical="5dp"
                 android:text="📄 Текст"
                 android:textColor="#9DA7B5"
                 android:textSize="11.5sp"
@@ -364,16 +373,17 @@
         <LinearLayout
             android:id="@+id/layoutQuickActions"
             android:layout_width="match_parent"
-            android:layout_height="36dp"
+            android:layout_height="wrap_content"
             android:layout_marginTop="7dp"
             android:gravity="center_vertical"
+            android:minHeight="36dp"
             android:orientation="horizontal"
             app:layout_constraintTop_toBottomOf="@id/layoutModeTabs">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnOpenGeniusWeb"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="36dp"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
                 android:backgroundTint="#FFE600"
@@ -397,7 +407,7 @@
                 android:id="@+id/btnToggleFloating"
                 style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="match_parent"
+                android:layout_height="36dp"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
                 android:backgroundTint="#161D28"
@@ -455,21 +465,25 @@
         <FrameLayout
             android:id="@+id/layoutMotionDeck"
             android:layout_width="match_parent"
-            android:layout_height="34dp"
+            android:layout_height="wrap_content"
             android:layout_marginTop="7dp"
+            android:minHeight="36dp"
             app:layout_constraintTop_toBottomOf="@id/layoutQuickActions">
 
             <HorizontalScrollView
                 android:id="@+id/scrollMainStyles"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
                 android:scrollbars="none">
 
                 <LinearLayout
                     android:layout_width="wrap_content"
-                    android:layout_height="match_parent"
+                    android:layout_height="wrap_content"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:minHeight="36dp"
+                    android:orientation="horizontal"
+                    android:paddingVertical="1dp">
 
                     <TextView
                         android:id="@+id/mainStyleFly"
@@ -552,6 +566,50 @@
                         android:layout_marginEnd="8dp"
                         android:background="#283447" />
 
+                    <TextView
+                        android:id="@+id/btnSyncBackMain"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="5dp"
+                        android:text="-0.5с"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvSyncOffsetMain"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginHorizontal="5dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFeatureSettings="tnum"
+                        android:paddingHorizontal="4dp"
+                        android:paddingVertical="4dp"
+                        android:text="0.0с"
+                        android:textColor="@color/accent_spotify"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnSyncFwdMain"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="5dp"
+                        android:text="+0.5с"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnToggleScroll"
                         style="@style/Widget.Material3.Button.TonalButton"
@@ -607,9 +665,12 @@
             <TextView
                 android:id="@+id/tvPlainTextModeLabel"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:background="@drawable/glass_pill_bg"
                 android:gravity="center"
+                android:minHeight="34dp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="6dp"
                 android:text="📄 Режим простого текста — тап по строке перематывает трек"
                 android:textColor="#9DA7B5"
                 android:textSize="11.5sp"
@@ -623,6 +684,8 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_marginTop="6dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintTop_toBottomOf="@id/layoutMotionDeck">
 
@@ -630,10 +693,10 @@
                 android:id="@+id/rvLyrics"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:clipToPadding="true"
+                android:clipToPadding="false"
                 android:overScrollMode="never"
                 android:paddingTop="12dp"
-                android:paddingBottom="160dp"
+                android:paddingBottom="180dp"
                 android:scrollbars="none" />
 
             <ProgressBar
