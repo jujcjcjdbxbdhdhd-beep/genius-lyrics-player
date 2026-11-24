@@ -17,8 +17,8 @@
         android:id="@+id/layoutMainContent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:clipChildren="false"
-        android:clipToPadding="false"
+        android:clipChildren="true"
+        android:clipToPadding="true"
         android:paddingHorizontal="14dp"
         android:paddingTop="12dp"
         android:paddingBottom="10dp">
@@ -698,9 +698,9 @@
             android:id="@+id/layoutLyricsContainer"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="6dp"
-            android:clipChildren="false"
-            android:clipToPadding="false"
+            android:layout_marginTop="10dp"
+            android:clipChildren="true"
+            android:clipToPadding="true"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintTop_toBottomOf="@id/layoutMotionDeck">
 
@@ -708,9 +708,10 @@
                 android:id="@+id/rvLyrics"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
+                android:clipChildren="true"
                 android:clipToPadding="false"
                 android:overScrollMode="never"
-                android:paddingTop="12dp"
+                android:paddingTop="8dp"
                 android:paddingBottom="180dp"
                 android:scrollbars="none" />
 
@@ -772,527 +773,560 @@
     </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Dedicated Full-Screen Word-By-Word ("По словам") Stage Page -->
-    <LinearLayout
+    <FrameLayout
         android:id="@+id/layoutWordByWordPage"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#E806080C"
+        android:background="#FF05070B"
         android:clickable="true"
-        android:clipChildren="false"
-        android:clipToPadding="false"
+        android:clipChildren="true"
+        android:clipToPadding="true"
         android:elevation="18dp"
         android:focusable="true"
-        android:orientation="vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="16dp"
         android:visibility="gone">
 
-        <!-- Top Navigation & Live Rhythm Bar -->
+        <!-- Animated 60fps Dynamic Background for Word-By-Word Mode -->
+        <com.satulin.geniuslyrics.WordStageBackgroundView
+            android:id="@+id/wordStageBackground"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
         <LinearLayout
-            android:id="@+id/layoutWordPageTopBar"
+            android:id="@+id/layoutWordPageContent"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:minHeight="38dp"
-            android:orientation="horizontal">
+            android:layout_height="match_parent"
+            android:clipChildren="true"
+            android:clipToPadding="true"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="14dp">
 
-            <TextView
-                android:id="@+id/btnWordPageBack"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/glass_pill_bg"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center"
-                android:minHeight="34dp"
-                android:paddingHorizontal="13dp"
-                android:paddingVertical="6dp"
-                android:text="← К списку"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvWordPageSectionBadge"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="8dp"
-                android:layout_weight="1"
-                android:background="@drawable/glass_pill_bg"
-                android:ellipsize="end"
-                android:fontFeatureSettings="tnum"
-                android:gravity="center"
-                android:maxLines="1"
-                android:minHeight="34dp"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="6dp"
-                android:text="✨ ПО СЛОВАМ • РИТМ"
-                android:textColor="#00E5FF"
-                android:textSize="11.5sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/btnWordPageStyle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/glass_pill_bg"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center"
-                android:minHeight="34dp"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="6dp"
-                android:text="🚀 Вылет"
-                android:textColor="#39FF88"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <!-- Top Live Audio Wave, Spectrum Visualizer & Track Header Card -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardWordPageTopVisualizer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            app:cardBackgroundColor="#FF0D121B"
-            app:cardCornerRadius="24dp"
-            app:cardElevation="0dp"
-            app:strokeColor="#223249"
-            app:strokeWidth="1dp">
-
+            <!-- Top Navigation & Live Rhythm Bar -->
             <LinearLayout
+                android:id="@+id/layoutWordPageTopBar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingBottom="12dp">
+                android:gravity="center_vertical"
+                android:minHeight="34dp"
+                android:orientation="horizontal">
 
-                <!-- 60fps Audio Wave + Symmetric Spectrum + Beat Shockwave Visualizer -->
-                <com.satulin.geniuslyrics.WordStageVisualizerView
-                    android:id="@+id/wordStageVisualizer"
-                    android:layout_width="match_parent"
-                    android:layout_height="96dp" />
+                <TextView
+                    android:id="@+id/btnWordPageBack"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/glass_pill_bg"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:minHeight="34dp"
+                    android:paddingHorizontal="13dp"
+                    android:paddingVertical="6dp"
+                    android:text="← К списку"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvWordPageSectionBadge"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/glass_pill_bg"
+                    android:ellipsize="end"
+                    android:fontFeatureSettings="tnum"
+                    android:gravity="center"
+                    android:maxLines="1"
+                    android:minHeight="34dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="6dp"
+                    android:text="✨ ПО СЛОВАМ • РИТМ"
+                    android:textColor="#00E5FF"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnWordPageStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/glass_pill_bg"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:minHeight="34dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="6dp"
+                    android:text="🚀 Вылет"
+                    android:textColor="#39FF88"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Top Live Audio Wave, Spectrum Visualizer & Track Header Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardWordPageTopVisualizer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardBackgroundColor="#CC0B1018"
+                app:cardCornerRadius="24dp"
+                app:cardElevation="0dp"
+                app:strokeColor="#223249"
+                app:strokeWidth="1dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingHorizontal="16dp">
+                    android:orientation="vertical"
+                    android:paddingBottom="10dp">
+
+                    <!-- 60fps Audio Wave + Symmetric Spectrum + Beat Shockwave Visualizer -->
+                    <com.satulin.geniuslyrics.WordStageVisualizerView
+                        android:id="@+id/wordStageVisualizer"
+                        android:layout_width="match_parent"
+                        android:layout_height="84dp" />
 
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
+                        android:layout_marginTop="4dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="16dp">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tvWordPageSongTitle"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:ellipsize="end"
+                                android:fontFamily="sans-serif-black"
+                                android:letterSpacing="-0.02"
+                                android:maxLines="1"
+                                android:text="Включите песню"
+                                android:textColor="#FFFFFF"
+                                android:textSize="16sp" />
+
+                            <TextView
+                                android:id="@+id/tvWordPageSongArtist"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:ellipsize="end"
+                                android:maxLines="1"
+                                android:text="SoundCloud • Spotify"
+                                android:textColor="#9DA7B5"
+                                android:textSize="12sp" />
+                        </LinearLayout>
 
                         <TextView
-                            android:id="@+id/tvWordPageSongTitle"
-                            android:layout_width="match_parent"
+                            android:id="@+id/tvWordPageTime"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:ellipsize="end"
-                            android:fontFamily="sans-serif-black"
-                            android:letterSpacing="-0.02"
-                            android:maxLines="1"
-                            android:text="Включите песню"
-                            android:textColor="#FFFFFF"
-                            android:textSize="17sp" />
-
-                        <TextView
-                            android:id="@+id/tvWordPageSongArtist"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="1dp"
-                            android:ellipsize="end"
-                            android:maxLines="1"
-                            android:text="SoundCloud • Spotify"
-                            android:textColor="#9DA7B5"
-                            android:textSize="12.5sp" />
+                            android:layout_marginStart="10dp"
+                            android:background="@drawable/glass_pill_bg"
+                            android:fontFamily="sans-serif-medium"
+                            android:fontFeatureSettings="tnum"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="4dp"
+                            android:text="00:00 / --:--"
+                            android:textColor="#00E5FF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
 
+                    <ProgressBar
+                        android:id="@+id/pbWordPageTrack"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="4dp"
+                        android:layout_marginHorizontal="16dp"
+                        android:layout_marginTop="8dp"
+                        android:max="1000"
+                        android:progress="0"
+                        android:progressDrawable="@drawable/progress_glow_drawable" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Color Theme, Stage Background & Animated Sticker Picker Deck -->
+            <HorizontalScrollView
+                android:id="@+id/scrollWordPageVibeDeck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:clipToPadding="false"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:minHeight="34dp"
+                    android:orientation="horizontal"
+                    android:paddingVertical="1dp">
+
                     <TextView
-                        android:id="@+id/tvWordPageTime"
+                        android:id="@+id/btnWordPageTheme"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
+                        android:layout_marginEnd="6dp"
                         android:background="@drawable/glass_pill_bg"
-                        android:fontFamily="sans-serif-medium"
-                        android:fontFeatureSettings="tnum"
-                        android:paddingHorizontal="10dp"
-                        android:paddingVertical="4dp"
-                        android:text="00:00 / --:--"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="11dp"
+                        android:paddingVertical="5dp"
+                        android:text="💚 Изумруд"
+                        android:textColor="#39FF88"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnWordPageBg"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="11dp"
+                        android:paddingVertical="5dp"
+                        android:text="🌌 Космос"
                         android:textColor="#00E5FF"
-                        android:textSize="11sp"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <View
+                        android:layout_width="1dp"
+                        android:layout_height="18dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="#283447" />
+
+                    <TextView
+                        android:id="@+id/chipStickerVinyl"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="💿 Винил"
+                        android:textColor="#39FF88"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipStickerFire"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="🔥 Огонь"
+                        android:textColor="#9DA7B5"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipStickerCat"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="😼 Вайб-кот"
+                        android:textColor="#9DA7B5"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipStickerHeart"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="💖 Неон-бит"
+                        android:textColor="#9DA7B5"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipStickerBolt"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="⚡ Разряд"
+                        android:textColor="#9DA7B5"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chipStickerCrown"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/glass_pill_bg"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="👑 Хит"
+                        android:textColor="#9DA7B5"
+                        android:textSize="11.5sp"
                         android:textStyle="bold" />
                 </LinearLayout>
+            </HorizontalScrollView>
 
-                <ProgressBar
-                    android:id="@+id/pbWordPageTrack"
-                    style="?android:attr/progressBarStyleHorizontal"
+            <!-- Center Smooth Kinetic Word-by-Word Stage (strictly bounded & clipped) -->
+            <LinearLayout
+                android:id="@+id/layoutWordPageCenterStage"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginVertical="6dp"
+                android:layout_weight="1"
+                android:clipChildren="true"
+                android:clipToPadding="true"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingHorizontal="6dp">
+
+                <!-- Previous Line Whisper (tap to seek back) -->
+                <TextView
+                    android:id="@+id/tvWordPagePrevLine"
                     android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:ellipsize="end"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:includeFontPadding="true"
+                    android:lineSpacingExtra="2dp"
+                    android:maxLines="1"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="2dp"
+                    android:text=""
+                    android:textColor="#647082"
+                    android:textSize="14sp" />
+
+                <!-- Dual-Buffered Giant Hero Word Spotlight -->
+                <FrameLayout
+                    android:id="@+id/frameWordHeroStage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:clipChildren="true"
+                    android:clipToPadding="true"
+                    android:minHeight="82dp"
+                    android:paddingVertical="4dp">
+
+                    <TextView
+                        android:id="@+id/tvWordHeroA"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:ellipsize="end"
+                        android:fontFamily="sans-serif-black"
+                        android:gravity="center"
+                        android:includeFontPadding="true"
+                        android:letterSpacing="-0.02"
+                        android:maxLines="1"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="4dp"
+                        android:text="♪"
+                        android:textColor="#FFFFFF"
+                        android:textSize="38sp" />
+
+                    <TextView
+                        android:id="@+id/tvWordHeroB"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:alpha="0"
+                        android:ellipsize="end"
+                        android:fontFamily="sans-serif-black"
+                        android:gravity="center"
+                        android:includeFontPadding="true"
+                        android:letterSpacing="-0.02"
+                        android:maxLines="1"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="4dp"
+                        android:text=""
+                        android:textColor="#FFFFFF"
+                        android:textSize="38sp" />
+                </FrameLayout>
+
+                <!-- Continuous 60fps Intra-Word Fill Bar -->
+                <ProgressBar
+                    android:id="@+id/pbWordActiveFill"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="150dp"
                     android:layout_height="4dp"
-                    android:layout_marginHorizontal="16dp"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="10dp"
                     android:max="1000"
                     android:progress="0"
                     android:progressDrawable="@drawable/progress_glow_drawable" />
+
+                <!-- Current Full Line with Live Smooth Word Highlight -->
+                <TextView
+                    android:id="@+id/tvWordPageCurrentLine"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-black"
+                    android:gravity="center"
+                    android:includeFontPadding="true"
+                    android:letterSpacing="-0.01"
+                    android:lineSpacingExtra="3dp"
+                    android:maxLines="3"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:text="Включите трек, чтобы видеть каждое слово в ритме песни"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18.5sp" />
+
+                <!-- Next Upcoming Line Preview (tap to seek forward) -->
+                <TextView
+                    android:id="@+id/tvWordPageNextLine"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:clickable="true"
+                    android:ellipsize="end"
+                    android:focusable="true"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:includeFontPadding="true"
+                    android:lineSpacingExtra="2dp"
+                    android:maxLines="2"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="2dp"
+                    android:text=""
+                    android:textColor="#8A97AB"
+                    android:textSize="14.5sp" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
 
-        <!-- Color Theme & Animated Sticker Picker Deck -->
-        <HorizontalScrollView
-            android:id="@+id/scrollWordPageVibeDeck"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:clipToPadding="false"
-            android:scrollbars="none">
-
+            <!-- Bottom Floating Glass Control Dock -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:id="@+id/layoutWordPageBottomDock"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="@drawable/glass_pill_bg"
                 android:gravity="center_vertical"
-                android:minHeight="34dp"
+                android:minHeight="42dp"
                 android:orientation="horizontal"
-                android:paddingVertical="1dp">
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp">
 
                 <TextView
-                    android:id="@+id/btnWordPageTheme"
+                    android:id="@+id/btnWordPagePrevLine"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
                     android:background="@drawable/glass_pill_bg"
                     android:clickable="true"
                     android:focusable="true"
                     android:paddingHorizontal="11dp"
-                    android:paddingVertical="5dp"
-                    android:text="💚 Изумруд"
-                    android:textColor="#39FF88"
+                    android:paddingVertical="6dp"
+                    android:text="⏮ Пред."
+                    android:textColor="#FFFFFF"
                     android:textSize="11.5sp"
                     android:textStyle="bold" />
 
                 <View
-                    android:layout_width="1dp"
-                    android:layout_height="18dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="#283447" />
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                 <TextView
-                    android:id="@+id/chipStickerVinyl"
+                    android:id="@+id/btnWordPageSyncBack"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
                     android:background="@drawable/glass_pill_bg"
                     android:clickable="true"
                     android:focusable="true"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="💿 Винил"
-                    android:textColor="#39FF88"
+                    android:paddingVertical="6dp"
+                    android:text="-0.5с"
+                    android:textColor="#FFFFFF"
                     android:textSize="11.5sp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:id="@+id/chipStickerFire"
+                    android:id="@+id/tvWordPageSyncOffset"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/glass_pill_bg"
+                    android:layout_marginHorizontal="8dp"
                     android:clickable="true"
                     android:focusable="true"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="🔥 Огонь"
+                    android:fontFeatureSettings="tnum"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="4dp"
+                    android:text="0.0с"
                     android:textColor="#9DA7B5"
                     android:textSize="11.5sp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:id="@+id/chipStickerCat"
+                    android:id="@+id/btnWordPageSyncFwd"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
                     android:background="@drawable/glass_pill_bg"
                     android:clickable="true"
                     android:focusable="true"
                     android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="😼 Вайб-кот"
-                    android:textColor="#9DA7B5"
+                    android:paddingVertical="6dp"
+                    android:text="+0.5с"
+                    android:textColor="#FFFFFF"
                     android:textSize="11.5sp"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/chipStickerHeart"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/glass_pill_bg"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="💖 Неон-бит"
-                    android:textColor="#9DA7B5"
-                    android:textSize="11.5sp"
-                    android:textStyle="bold" />
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                 <TextView
-                    android:id="@+id/chipStickerBolt"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/glass_pill_bg"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="⚡ Разряд"
-                    android:textColor="#9DA7B5"
-                    android:textSize="11.5sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/chipStickerCrown"
+                    android:id="@+id/btnWordPageNextLine"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:background="@drawable/glass_pill_bg"
                     android:clickable="true"
                     android:focusable="true"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="👑 Хит"
-                    android:textColor="#9DA7B5"
+                    android:paddingHorizontal="11dp"
+                    android:paddingVertical="6dp"
+                    android:text="След. ⏭"
+                    android:textColor="#FFFFFF"
                     android:textSize="11.5sp"
                     android:textStyle="bold" />
             </LinearLayout>
-        </HorizontalScrollView>
 
-        <!-- Center Smooth Kinetic Word-by-Word Stage -->
-        <LinearLayout
-            android:id="@+id/layoutWordPageCenterStage"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:clipChildren="false"
-            android:clipToPadding="false"
-            android:gravity="center"
-            android:orientation="vertical"
-            android:paddingHorizontal="6dp">
-
-            <!-- Previous Line Whisper (tap to seek back) -->
-            <TextView
-                android:id="@+id/tvWordPagePrevLine"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:clickable="true"
-                android:ellipsize="end"
-                android:focusable="true"
-                android:fontFamily="sans-serif-medium"
-                android:gravity="center"
-                android:includeFontPadding="true"
-                android:lineSpacingExtra="3dp"
-                android:maxLines="2"
-                android:minHeight="40dp"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="4dp"
-                android:text=""
-                android:textColor="#647082"
-                android:textSize="15.5sp" />
-
-            <!-- Dual-Buffered Giant Hero Word Spotlight -->
-            <FrameLayout
-                android:id="@+id/frameWordHeroStage"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:clipChildren="false"
-                android:clipToPadding="false"
-                android:minHeight="104dp"
-                android:paddingVertical="6dp">
-
-                <TextView
-                    android:id="@+id/tvWordHeroA"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:ellipsize="end"
-                    android:fontFamily="sans-serif-black"
-                    android:gravity="center"
-                    android:includeFontPadding="true"
-                    android:letterSpacing="-0.02"
-                    android:maxLines="2"
-                    android:paddingHorizontal="8dp"
-                    android:paddingVertical="4dp"
-                    android:text="♪"
-                    android:textColor="#FFFFFF"
-                    android:textSize="40sp" />
-
-                <TextView
-                    android:id="@+id/tvWordHeroB"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:alpha="0"
-                    android:ellipsize="end"
-                    android:fontFamily="sans-serif-black"
-                    android:gravity="center"
-                    android:includeFontPadding="true"
-                    android:letterSpacing="-0.02"
-                    android:maxLines="2"
-                    android:paddingHorizontal="8dp"
-                    android:paddingVertical="4dp"
-                    android:text=""
-                    android:textColor="#FFFFFF"
-                    android:textSize="40sp" />
-            </FrameLayout>
-
-            <!-- Continuous 60fps Intra-Word Fill Bar -->
-            <ProgressBar
-                android:id="@+id/pbWordActiveFill"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="150dp"
-                android:layout_height="4dp"
-                android:layout_marginTop="2dp"
-                android:layout_marginBottom="16dp"
-                android:max="1000"
-                android:progress="0"
-                android:progressDrawable="@drawable/progress_glow_drawable" />
-
-            <!-- Current Full Line with Live Smooth Word Highlight -->
-            <TextView
-                android:id="@+id/tvWordPageCurrentLine"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-black"
-                android:gravity="center"
-                android:includeFontPadding="true"
-                android:letterSpacing="-0.01"
-                android:lineSpacingExtra="5dp"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="6dp"
-                android:text="Включите трек, чтобы видеть каждое слово в ритме песни"
-                android:textColor="#FFFFFF"
-                android:textSize="21sp" />
-
-            <!-- Next Upcoming Line Preview (tap to seek forward) -->
-            <TextView
-                android:id="@+id/tvWordPageNextLine"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:clickable="true"
-                android:ellipsize="end"
-                android:focusable="true"
-                android:fontFamily="sans-serif-medium"
-                android:gravity="center"
-                android:includeFontPadding="true"
-                android:lineSpacingExtra="3dp"
-                android:maxLines="2"
-                android:minHeight="42dp"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="4dp"
-                android:text=""
-                android:textColor="#8A97AB"
-                android:textSize="16sp" />
         </LinearLayout>
 
-        <!-- Bottom Floating Glass Control Dock -->
-        <LinearLayout
-            android:id="@+id/layoutWordPageBottomDock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/glass_pill_bg"
-            android:gravity="center_vertical"
-            android:minHeight="44dp"
-            android:orientation="horizontal"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="5dp">
-
-            <TextView
-                android:id="@+id/btnWordPagePrevLine"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/glass_pill_bg"
-                android:clickable="true"
-                android:focusable="true"
-                android:paddingHorizontal="11dp"
-                android:paddingVertical="6dp"
-                android:text="⏮ Пред."
-                android:textColor="#FFFFFF"
-                android:textSize="11.5sp"
-                android:textStyle="bold" />
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <TextView
-                android:id="@+id/btnWordPageSyncBack"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/glass_pill_bg"
-                android:clickable="true"
-                android:focusable="true"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="6dp"
-                android:text="-0.5с"
-                android:textColor="#FFFFFF"
-                android:textSize="11.5sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvWordPageSyncOffset"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="8dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:fontFeatureSettings="tnum"
-                android:paddingHorizontal="4dp"
-                android:paddingVertical="4dp"
-                android:text="0.0с"
-                android:textColor="#9DA7B5"
-                android:textSize="11.5sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/btnWordPageSyncFwd"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/glass_pill_bg"
-                android:clickable="true"
-                android:focusable="true"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="6dp"
-                android:text="+0.5с"
-                android:textColor="#FFFFFF"
-                android:textSize="11.5sp"
-                android:textStyle="bold" />
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <TextView
-                android:id="@+id/btnWordPageNextLine"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/glass_pill_bg"
-                android:clickable="true"
-                android:focusable="true"
-                android:paddingHorizontal="11dp"
-                android:paddingVertical="6dp"
-                android:text="След. ⏭"
-                android:textColor="#FFFFFF"
-                android:textSize="11.5sp"
-                android:textStyle="bold" />
-        </LinearLayout>
-
-    </LinearLayout>
+    </FrameLayout>
 
     <!-- Full-Screen Edge-To-Edge In-App Genius Web Browser -->
     <LinearLayout

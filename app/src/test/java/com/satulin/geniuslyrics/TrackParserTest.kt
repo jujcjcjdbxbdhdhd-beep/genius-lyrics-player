@@ -465,5 +465,16 @@ class TrackParserTest {
             assertEquals(expectedNext, VibeStickerStyle.nextSticker(s))
         }
         assertEquals(VibeStickerStyle.VINYL_DISC, VibeStickerStyle.fromId(null))
+
+        // 4. VibeBackgroundStyle cycling & fromId
+        val bgStyles = VibeBackgroundStyle.values()
+        assertEquals(4, bgStyles.size)
+        for (i in bgStyles.indices) {
+            val b = bgStyles[i]
+            assertEquals(b, VibeBackgroundStyle.fromId(b.id))
+            val expectedNext = bgStyles[(i + 1) % bgStyles.size]
+            assertEquals(expectedNext, VibeBackgroundStyle.nextStyle(b))
+        }
+        assertEquals(VibeBackgroundStyle.NEBULA_RINGS, VibeBackgroundStyle.fromId("unknown"))
     }
 }

@@ -159,6 +159,21 @@ enum class VibeStickerStyle(
     }
 }
 
+enum class VibeBackgroundStyle(val id: String, val shortLabel: String) {
+    NEBULA_RINGS("nebula", "🌌 Космос"),
+    AURORA_CURTAINS("aurora", "🌊 Сияние"),
+    SYNTH_GRID("grid", "🕹️ Сетка"),
+    CONCERT_SPOTLIGHT("spotlight", "✨ Сцена");
+
+    companion object {
+        fun fromId(id: String?): VibeBackgroundStyle =
+            values().firstOrNull { it.id == id } ?: NEBULA_RINGS
+
+        fun nextStyle(current: VibeBackgroundStyle): VibeBackgroundStyle =
+            values()[(current.ordinal + 1) % values().size]
+    }
+}
+
 object SpringMath {
     /**
      * Evaluates a physical damped harmonic oscillator curve for normalized time t in [0, 1].
@@ -322,6 +337,7 @@ object AppMotionPrefs {
     const val KEY_DISPLAY_MODE = "lyrics_display_mode"
     const val KEY_COLOR_THEME = "vibe_color_theme"
     const val KEY_STICKER_STYLE = "vibe_sticker_style"
+    const val KEY_WORD_BG_STYLE = "vibe_word_bg_style"
     const val ACTION_PREFS_CHANGED = "com.satulin.geniuslyrics.ACTION_PREFS_CHANGED"
 
     @Volatile
@@ -401,6 +417,20 @@ object AppMotionPrefs {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_STICKER_STYLE, sticker.id)
+            .apply()
+        notifyPrefsChanged(context)
+    }
+
+    fun getWordBgStyle(context: Context): VibeBackgroundStyle {
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_WORD_BG_STYLE, VibeBackgroundStyle.NEBULA_RINGS.id)
+        return VibeBackgroundStyle.fromId(raw)
+    }
+
+    fun setWordBgStyle(context: Context, style: VibeBackgroundStyle) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_WORD_BG_STYLE, style.id)
             .apply()
         notifyPrefsChanged(context)
     }

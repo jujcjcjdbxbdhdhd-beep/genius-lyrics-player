@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity() {
     private var currentStyle = IslandAnimStyle.FLY_IN
     private var currentTheme = VibeColorTheme.CYBER_EMERALD
     private var currentSticker = VibeStickerStyle.VINYL_DISC
+    private var currentBgStyle = VibeBackgroundStyle.NEBULA_RINGS
     private var eqJob: Job? = null
     private var eqPhase: Double = 0.0
     private var lastBeatWordKey: Long = -1L
@@ -120,6 +121,7 @@ class MainActivity : AppCompatActivity() {
                     updatePlaybackTime(pos, dur, updated, isPlaying, spd)
                     binding.ambientAura.setPlaying(isPlaying)
                     binding.wordStageVisualizer.setPlayingState(isPlaying)
+                    binding.wordStageBackground.setPlayingState(isPlaying)
                     onTrackUpdated(title, artist, rawTitle, artistFromTitle, isPlaying)
                 }
                 MediaNotificationListener.ACTION_PLAYBACK_STATE -> {
@@ -132,6 +134,7 @@ class MainActivity : AppCompatActivity() {
 
                     binding.ambientAura.setPlaying(isPlaying)
                     binding.wordStageVisualizer.setPlayingState(isPlaying)
+                    binding.wordStageBackground.setPlayingState(isPlaying)
                     val now = SystemClock.elapsedRealtime()
                     if (fromSeek) {
                         seekIgnoreUntilSystemMs = now + 650L
@@ -162,6 +165,7 @@ class MainActivity : AppCompatActivity() {
                     currentStyle = AppMotionPrefs.getIslandStyle(this@MainActivity)
                     currentTheme = AppMotionPrefs.getColorTheme(this@MainActivity)
                     currentSticker = AppMotionPrefs.getStickerStyle(this@MainActivity)
+                    currentBgStyle = AppMotionPrefs.getWordBgStyle(this@MainActivity)
                     manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
                     updateSyncOffsetLabel()
                     lyricsAdapter.displayMode = displayMode
@@ -184,6 +188,7 @@ class MainActivity : AppCompatActivity() {
         currentStyle = AppMotionPrefs.getIslandStyle(this)
         currentTheme = AppMotionPrefs.getColorTheme(this)
         currentSticker = AppMotionPrefs.getStickerStyle(this)
+        currentBgStyle = AppMotionPrefs.getWordBgStyle(this)
         manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
         setupRecyclerView()
         setupUI()
@@ -204,9 +209,11 @@ class MainActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         val baseSide = (14f * density).toInt()
         val baseTop = (12f * density).toInt()
-        val baseBottom = (12f * density).toInt()
+        val baseBottom = (6f * density).toInt()
         val baseRvBottom = (180f * density).toInt()
-        val baseRvTop = (12f * density).toInt()
+        val baseRvTop = (8f * density).toInt()
+        val wordSide = (16f * density).toInt()
+        val wordBottom = (14f * density).toInt()
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, windowInsets ->
             val sysBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -222,11 +229,11 @@ class MainActivity : AppCompatActivity() {
                 0,
                 baseRvBottom + sysBars.bottom
             )
-            binding.layoutWordByWordPage.setPadding(
-                baseSide + sysBars.left,
+            binding.layoutWordPageContent.setPadding(
+                wordSide + sysBars.left,
                 baseTop + sysBars.top,
-                baseSide + sysBars.right,
-                baseBottom + sysBars.bottom
+                wordSide + sysBars.right,
+                wordBottom + sysBars.bottom
             )
             binding.layoutGeniusWebView.setPadding(
                 sysBars.left,
@@ -367,6 +374,7 @@ class MainActivity : AppCompatActivity() {
         currentStyle = AppMotionPrefs.getIslandStyle(this)
         currentTheme = AppMotionPrefs.getColorTheme(this)
         currentSticker = AppMotionPrefs.getStickerStyle(this)
+        currentBgStyle = AppMotionPrefs.getWordBgStyle(this)
         manualSyncOffsetMs = AppMotionPrefs.currentSyncOffsetMs
         updateSyncOffsetLabel()
         lyricsAdapter.displayMode = displayMode
@@ -418,12 +426,15 @@ class MainActivity : AppCompatActivity() {
         }
         binding.ambientAura.setPlaying(MediaNotificationListener.isPlaying)
         binding.wordStageVisualizer.setPlayingState(MediaNotificationListener.isPlaying)
+        binding.wordStageBackground.setPlayingState(MediaNotificationListener.isPlaying)
+        binding.wordStageBackground.setActive(displayMode == LyricsDisplayMode.WORD_BY_WORD)
         startMainEqualizerLoop()
     }
 
     override fun onPause() {
         super.onPause()
         eqJob?.cancel()
+        binding.wordStageBackground.setActive(false)
         try {
             unregisterReceiver(trackReceiver)
         } catch (_: Exception) {}
@@ -605,6 +616,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnMainTheme.setOnClickListener { cycleColorTheme() }
         binding.btnWordPageTheme.setOnClickListener { cycleColorTheme() }
+        binding.btnWordPageBg.setOnClickListener { cycleWordBgStyle() }
 
         binding.chipStickerVinyl.setOnClickListener { selectStickerStyle(VibeStickerStyle.VINYL_DISC) }
         binding.chipStickerFire.setOnClickListener { selectStickerStyle(VibeStickerStyle.FIRE_DROP) }
@@ -616,11 +628,13 @@ class MainActivity : AppCompatActivity() {
         binding.frameWordHeroStage.setOnClickListener {
             binding.frameWordHeroStage.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
             binding.wordStageVisualizer.triggerStickerBurst(7)
+            binding.wordStageBackground.triggerWordBeat(1.2f)
             binding.ambientAura.triggerPulse(0.95f)
         }
         binding.tvWordPageCurrentLine.setOnClickListener {
             binding.tvWordPageCurrentLine.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
             binding.wordStageVisualizer.triggerStickerBurst(6)
+            binding.wordStageBackground.triggerWordBeat(1.2f)
             binding.ambientAura.triggerPulse(0.85f)
         }
 
@@ -663,6 +677,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnWordPageBack,
             binding.btnWordPageStyle,
             binding.btnWordPageTheme,
+            binding.btnWordPageBg,
             binding.chipStickerVinyl,
             binding.chipStickerFire,
             binding.chipStickerCat,
@@ -708,6 +723,14 @@ class MainActivity : AppCompatActivity() {
         syncActiveLineToPosition(smoothScroll = false)
     }
 
+    private fun cycleWordBgStyle() {
+        currentBgStyle = VibeBackgroundStyle.nextStyle(currentBgStyle)
+        AppMotionPrefs.setWordBgStyle(this, currentBgStyle)
+        binding.root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        applyVibeThemeAndStickerUI(triggerBurst = true)
+        binding.wordStageBackground.triggerWordBeat(1.25f)
+    }
+
     private fun selectStickerStyle(sticker: VibeStickerStyle) {
         currentSticker = sticker
         AppMotionPrefs.setStickerStyle(this, sticker)
@@ -724,6 +747,8 @@ class MainActivity : AppCompatActivity() {
         binding.ambientAura.setColorTheme(effectiveTheme)
         binding.wordStageVisualizer.setColorTheme(effectiveTheme)
         binding.wordStageVisualizer.setStickerStyle(currentSticker, triggerBurst = triggerBurst)
+        binding.wordStageBackground.setColorTheme(effectiveTheme)
+        binding.wordStageBackground.setBackgroundStyle(currentBgStyle)
         lyricsAdapter.colorTheme = effectiveTheme
 
         for (themeBtn in listOf(binding.btnMainTheme, binding.btnWordPageTheme)) {
@@ -735,6 +760,14 @@ class MainActivity : AppCompatActivity() {
             )
             themeBtn.setTextColor(effectiveTheme.primaryColor)
         }
+
+        binding.btnWordPageBg.text = currentBgStyle.shortLabel
+        binding.btnWordPageBg.background = makeGlassChipDrawable(
+            effectiveTheme.chipFillColor,
+            effectiveTheme.secondaryColor,
+            radiusDp = 18
+        )
+        binding.btnWordPageBg.setTextColor(effectiveTheme.secondaryColor)
 
         val stickerMap = listOf(
             VibeStickerStyle.VINYL_DISC to binding.chipStickerVinyl,
@@ -762,6 +795,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvWordPageTime.setTextColor(effectiveTheme.secondaryColor)
         if (triggerBurst) {
             binding.ambientAura.triggerPulse(1.0f)
+            binding.wordStageBackground.triggerWordBeat(1.0f)
         }
     }
 
@@ -842,6 +876,8 @@ class MainActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         if (visible) {
             binding.wordStageVisualizer.setPlayingState(isMediaPlaying)
+            binding.wordStageBackground.setPlayingState(isMediaPlaying)
+            binding.wordStageBackground.setActive(true)
             if (page.visibility == View.VISIBLE && page.alpha > 0.95f) return
             page.visibility = View.VISIBLE
             if (animate) {
@@ -858,6 +894,7 @@ class MainActivity : AppCompatActivity() {
                 page.translationY = 0f
             }
         } else {
+            binding.wordStageBackground.setActive(false)
             if (page.visibility == View.GONE) return
             if (animate) {
                 page.animate()
@@ -1309,6 +1346,7 @@ class MainActivity : AppCompatActivity() {
         val sectionName = resolveActiveSectionLabel(timeline, activeIndex)
         val effectiveTheme = currentTheme.resolveEffective(sectionName, lineText)
         binding.wordStageVisualizer.setColorTheme(effectiveTheme)
+        binding.wordStageBackground.setColorTheme(effectiveTheme)
         binding.ambientAura.setColorTheme(effectiveTheme)
         if (lyricsAdapter.colorTheme != effectiveTheme) {
             lyricsAdapter.colorTheme = effectiveTheme
@@ -1325,6 +1363,7 @@ class MainActivity : AppCompatActivity() {
             if (headerKey != lastBeatWordKey) {
                 lastBeatWordKey = headerKey
                 binding.wordStageVisualizer.triggerStickerBurst(6)
+                binding.wordStageBackground.triggerWordBeat(1.0f)
                 animateHeroWordSwap(cleanHeader, isSectionHeader = true, accentColor = effectiveTheme.primaryColor)
             }
             return
@@ -1352,6 +1391,7 @@ class MainActivity : AppCompatActivity() {
             lastBeatWordKey = wordKey
             binding.ambientAura.triggerPulse(0.55f)
             binding.wordStageVisualizer.triggerWordPulse(1.0f)
+            binding.wordStageBackground.triggerWordBeat(1.0f)
             animateHeroWordSwap(activeToken.text, isSectionHeader = false, accentColor = effectiveTheme.primaryColor)
         }
     }
@@ -1372,7 +1412,7 @@ class MainActivity : AppCompatActivity() {
 
         val outDy = when (currentStyle) {
             IslandAnimStyle.SLIDE_KINETIC -> 0f
-            else -> -24f * density
+            else -> -18f * density
         }
         val outDx = if (currentStyle == IslandAnimStyle.SLIDE_KINETIC) -34f * density else 0f
 
@@ -1389,9 +1429,10 @@ class MainActivity : AppCompatActivity() {
             if (isSectionHeader) accentColor else Color.WHITE
         )
         incoming.textSize = when {
-            cleanWord.length > 14 -> 30f
-            cleanWord.length > 10 -> 34f
-            else -> 40f
+            cleanWord.length > 15 -> 24f
+            cleanWord.length > 12 -> 28f
+            cleanWord.length > 9 -> 33f
+            else -> 38f
         }
         incoming.scaleX = 1f
         incoming.scaleY = 1f
@@ -1401,7 +1442,7 @@ class MainActivity : AppCompatActivity() {
                 incoming.text = cleanWord
                 incoming.alpha = 0f
                 incoming.translationX = 0f
-                incoming.translationY = 26f * density
+                incoming.translationY = 20f * density
                 incoming.animate()
                     .alpha(1f)
                     .translationY(0f)
@@ -1437,7 +1478,7 @@ class MainActivity : AppCompatActivity() {
                 incoming.text = cleanWord
                 incoming.alpha = 0f
                 incoming.translationX = 0f
-                incoming.translationY = 32f * density
+                incoming.translationY = 22f * density
                 incoming.animate()
                     .alpha(1f)
                     .translationY(0f)
